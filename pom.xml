@@ -6,7 +6,7 @@
 
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-parent</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>pom</packaging>
 
     <name>imageio-native-parent</name>
