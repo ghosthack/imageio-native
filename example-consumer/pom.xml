@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>demo</groupId>
+    <artifactId>example-consumer</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <description>
+        Minimal project that depends on imageio-native (cross-platform aggregator)
+        and verifies that HEIC, AVIF, and WEBP images can be decoded through both
+        standard javax.imageio.ImageIO and the direct ImageioNative API, with no
+        explicit reader setup.
+    </description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.release>22</maven.compiler.release>
+        <!-- Default: only supplemental formats (HEIC, AVIF, WEBP, JP2, RAW, …) -->
+        <!-- Override with -Dimageio.native.formats=all to use native decoder for JPEG/PNG/TIFF too -->
+        <imageio.native.formats>supplemental</imageio.native.formats>
+    </properties>
+
+    <dependencies>
+        <!-- The library under test – pulled from the local Maven repo.
+             imageio-native transitively pulls in both platform modules;
+             only the one matching the current OS activates at runtime. -->
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
+            <artifactId>imageio-native</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.11.0</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+                <configuration>
+                    <release>22</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <argLine>--enable-native-access=ALL-UNNAMED -Dimageio.native.formats=${imageio.native.formats}</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.2</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>demo.DecodeDemo</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
