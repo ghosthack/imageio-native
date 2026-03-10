@@ -15,6 +15,7 @@ import java.util.Iterator;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Consumer-side integration test.
@@ -26,6 +27,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * Also tests the direct {@link ImageioNative} API for decode, getSize,
  * canDecode, and format/suffix queries.
  * <p>
+ * Codec-dependent tests are skipped when the required codec is not
+ * installed (e.g. on CI runners without HEVC/AV1/WebP extensions).
+ * <p>
  * Run with default (supplemental) mode:
  * <pre>mvn test</pre>
  * <p>
@@ -34,11 +38,18 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class DecodeTest {
 
-    // ── Supplemental formats always work (SPI path) ─────────────────────
+    private void assumeCanDecode(String resource) throws IOException {
+        byte[] data = loadResource(resource);
+        assumeTrue(ImageioNative.canDecode(data, data.length),
+                resource + " codec not available — skipping");
+    }
+
+    // ── Supplemental formats (SPI path) ─────────────────────────────────
 
     @ParameterizedTest(name = "decode {0}")
     @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
     void supplementalFormatsDecoded(String resource) throws IOException {
+        assumeCanDecode(resource);
         try (InputStream in = getClass().getClassLoader().getResourceAsStream(resource)) {
             assertNotNull(in, "fixture missing: " + resource);
 
@@ -116,6 +127,7 @@ class DecodeTest {
     @ParameterizedTest(name = "canDecode({0})")
     @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
     void directApiCanDecode(String resource) throws IOException {
+        assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         assertTrue(ImageioNative.canDecode(data, data.length),
                 "canDecode should return true for " + resource);
@@ -126,6 +138,7 @@ class DecodeTest {
     @ParameterizedTest(name = "getSize({0})")
     @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
     void directApiGetSize(String resource) throws IOException {
+        assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         Dimension size = ImageioNative.getSize(data);
         assertEquals(4, size.width, "width");
@@ -137,6 +150,7 @@ class DecodeTest {
     @ParameterizedTest(name = "decode({0})")
     @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
     void directApiDecode(String resource) throws IOException {
+        assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         BufferedImage img = ImageioNative.decode(data);
 
