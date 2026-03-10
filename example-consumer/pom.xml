@@ -6,7 +6,7 @@
 
     <groupId>demo</groupId>
     <artifactId>example-consumer</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.0.0</version>
 
     <description>
         Minimal project that depends on imageio-native (cross-platform aggregator)
@@ -30,7 +30,7 @@
         <dependency>
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native</artifactId>
-            <version>1.0-SNAPSHOT</version>
+            <version>1.0.0</version>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
