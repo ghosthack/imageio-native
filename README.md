@@ -80,6 +80,28 @@ Controlled by the system property `imageio.native.formats`:
 | WebP | Built-in (Windows 10 1809+) |
 | JPEG-XR | Built-in |
 
+## Runtime detection
+
+To check at runtime whether imageio-native is on the classpath (e.g. when it's an optional dependency), probe a class from the `imageio-native-common` module — it's a transitive dependency of every platform module, so it's always present regardless of which artifact was included:
+
+```java
+boolean available = false;
+try {
+    Class.forName("io.github.ghosthack.imageio.common.FormatRegistry");
+    available = true;
+} catch (ClassNotFoundException ignored) { }
+```
+
+To detect a specific platform module, check its SPI class:
+
+```java
+// macOS (imageio-native-apple)
+Class.forName("io.github.ghosthack.imageio.apple.AppleImageReaderSpi");
+
+// Windows (imageio-native-windows)
+Class.forName("io.github.ghosthack.imageio.windows.WicImageReaderSpi");
+```
+
 ## Architecture
 
 ```
