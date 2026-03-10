@@ -13,6 +13,7 @@ import java.util.Set;
 
 import static io.github.ghosthack.imageio.common.TestPixels.assertColourClose;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Tests for the {@link ImageioNative} unified cross-platform facade.
@@ -21,6 +22,18 @@ import static org.junit.jupiter.api.Assertions.*;
  * The tests verify the delegation logic and the public API contract.
  */
 class ImageioNativeTest {
+
+    /**
+     * On macOS all codecs are built-in; on Windows HEIC/AVIF/WebP require
+     * optional store-installed codecs that may not be present on CI runners.
+     * Skip tests that need actual decoding when the codec is absent.
+     */
+    private void assumeCanDecode(String resource) throws IOException {
+        if (!ImageioNative.isAvailable()) return;
+        byte[] data = loadResource(resource);
+        assumeTrue(ImageioNative.canDecode(data, data.length),
+                resource + " codec not available — skipping");
+    }
 
     // ── Availability ────────────────────────────────────────────────────
 
@@ -76,24 +89,24 @@ class ImageioNativeTest {
     void canDecodeHeic() throws IOException {
         if (!ImageioNative.isAvailable()) return;
         byte[] data = loadResource("test4x4.heic");
-        assertTrue(ImageioNative.canDecode(data, data.length),
-                "Should recognise HEIC data");
+        assumeTrue(ImageioNative.canDecode(data, data.length),
+                "HEIC codec not available — skipping");
     }
 
     @Test
     void canDecodeAvif() throws IOException {
         if (!ImageioNative.isAvailable()) return;
         byte[] data = loadResource("test4x4.avif");
-        assertTrue(ImageioNative.canDecode(data, data.length),
-                "Should recognise AVIF data");
+        assumeTrue(ImageioNative.canDecode(data, data.length),
+                "AVIF codec not available — skipping");
     }
 
     @Test
     void canDecodeWebp() throws IOException {
         if (!ImageioNative.isAvailable()) return;
         byte[] data = loadResource("test4x4.webp");
-        assertTrue(ImageioNative.canDecode(data, data.length),
-                "Should recognise WebP data");
+        assumeTrue(ImageioNative.canDecode(data, data.length),
+                "WebP codec not available — skipping");
     }
 
     @Test
@@ -109,6 +122,7 @@ class ImageioNativeTest {
     @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp", "test4x4.png"})
     void getSizeReturns4x4(String resource) throws IOException {
         if (!ImageioNative.isAvailable()) return;
+        assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         Dimension size = ImageioNative.getSize(data);
         assertEquals(4, size.width, "width");
@@ -129,6 +143,7 @@ class ImageioNativeTest {
     @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp", "test4x4.png"})
     void decodeReturnsCorrectImage(String resource) throws IOException {
         if (!ImageioNative.isAvailable()) return;
+        assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         BufferedImage img = ImageioNative.decode(data);
 
@@ -142,6 +157,7 @@ class ImageioNativeTest {
     @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
     void decodeQuadrantColours(String resource) throws IOException {
         if (!ImageioNative.isAvailable()) return;
+        assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         BufferedImage img = ImageioNative.decode(data);
 
