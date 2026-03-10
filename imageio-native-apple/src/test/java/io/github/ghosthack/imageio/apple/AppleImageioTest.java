@@ -1,6 +1,8 @@
 package io.github.ghosthack.imageio.apple;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -21,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * getSize (dimension-only) and full decode — all through the public API
  * rather than through the SPI/ImageIO path.
  */
+@EnabledOnOs(OS.MAC)
 class AppleImageioTest {
 
     // ── Availability ────────────────────────────────────────────────────
