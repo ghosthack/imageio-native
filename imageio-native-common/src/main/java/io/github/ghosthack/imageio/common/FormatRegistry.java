@@ -38,12 +38,17 @@ public class FormatRegistry {
     private final List<Format> active;
     private final Map<String, Format> byName;
 
+    // Cached query results — computed once in constructor
+    private final String[] cachedFormatNames;
+    private final String[] cachedSuffixes;
+    private final String[] cachedMimeTypes;
+
     /**
      * Creates a registry from the given platform-specific format list.
      *
      * @param allFormats all formats the platform can decode
      */
-    protected FormatRegistry(List<Format> allFormats) {
+    public FormatRegistry(List<Format> allFormats) {
         this.allFormats = List.copyOf(allFormats);
 
         // Build name lookup
@@ -70,26 +75,26 @@ public class FormatRegistry {
                         }).toList();
             }
         };
+
+        // Pre-compute query results once
+        this.cachedFormatNames = active.stream().flatMap(f -> Arrays.stream(f.names))
+                .distinct().toArray(String[]::new);
+        this.cachedSuffixes = active.stream().flatMap(f -> Arrays.stream(f.suffixes))
+                .distinct().toArray(String[]::new);
+        this.cachedMimeTypes = active.stream().flatMap(f -> Arrays.stream(f.mimeTypes))
+                .distinct().toArray(String[]::new);
     }
 
     // ── Queries ─────────────────────────────────────────────────────────
 
-    /** Returns all active format names (mixed case as declared). */
-    public String[] activeFormatNames() {
-        return active.stream().flatMap(f -> Arrays.stream(f.names)).toArray(String[]::new);
-    }
+    /** Returns all active format names (mixed case as declared, distinct). */
+    public String[] activeFormatNames() { return cachedFormatNames; }
 
     /** Returns all active file suffixes (lower-case, distinct). */
-    public String[] activeSuffixes() {
-        return active.stream().flatMap(f -> Arrays.stream(f.suffixes))
-                .distinct().toArray(String[]::new);
-    }
+    public String[] activeSuffixes() { return cachedSuffixes; }
 
     /** Returns all active MIME types (distinct). */
-    public String[] activeMimeTypes() {
-        return active.stream().flatMap(f -> Arrays.stream(f.mimeTypes))
-                .distinct().toArray(String[]::new);
-    }
+    public String[] activeMimeTypes() { return cachedMimeTypes; }
 
     /** Returns {@code true} if at least one format is active. */
     public boolean isEnabled() {

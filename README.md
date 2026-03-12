@@ -80,6 +80,15 @@ Controlled by the system property `imageio.native.formats`:
 | WebP | Built-in (Windows 10 1809+) |
 | JPEG-XR | Built-in |
 
+To check whether the required codecs are already installed:
+
+```powershell
+Get-AppxPackage -Name *hevc*   # HEVC (for HEIC/HEIF)
+Get-AppxPackage -Name *av1*    # AV1 (for AVIF)
+```
+
+> **Minimum image dimensions:** The HEVC and AV1 codec extensions cannot decode very small images. HEIC/HEIF requires at least 8×8 pixels and AVIF requires at least 8×8 pixels. Smaller images will fail with `E_INVALIDARG` during pixel decoding even though header parsing and format detection succeed. This is a limitation of the Windows codec extensions, not of WIC or this library.
+
 ## Runtime detection
 
 To check at runtime whether imageio-native is on the classpath (e.g. when it's an optional dependency), probe a class from the `imageio-native-common` module — it's a transitive dependency of every platform module, so it's always present regardless of which artifact was included:
@@ -155,7 +164,9 @@ mvn clean test                        # compile + test
 mvn install -DskipTests               # install to local repo
 mvn -f example-consumer/pom.xml test  # example-consumer
 
-swift generate-test-images.swift      # regenerate 4x4 test fixtures (macOS)
+swift generate-heic-avif-cgimage.swift   # HEIC + AVIF (macOS CGImage)
+./generate-png-webp-chrome.sh           # PNG + WebP  (Chrome headless)
+python generate-all-pillow.py           # all formats (pip: pillow + plugins)
 ```
 
 ## Releasing
