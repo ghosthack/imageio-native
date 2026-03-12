@@ -50,7 +50,8 @@ public final class FormatDetector {
             if (brands.contains(major)) return true;
 
             // Compatible brands start at offset 16 (after 4-byte minor_version)
-            int limit = Math.min(boxSize, n);
+            // boxSize == 0 means "box extends to end of file" per ISO 14496-12
+            int limit = (boxSize == 0) ? n : Math.min(boxSize, n);
             for (int off = 16; off + 4 <= limit; off += 4) {
                 String compat = new String(header, off, 4, StandardCharsets.US_ASCII);
                 if (brands.contains(compat)) return true;
@@ -118,10 +119,14 @@ public final class FormatDetector {
         if (len >= 4 && h[0] == 'M' && h[1] == 'M' && h[2] == 0x00 && u(h[3]) == 0x2A)
             return true;
 
-        // WBMP: type=00, fix_header=00, then varint width, varint height.
+        // WBMP: type=00, fix_header=00, then varint width > 0, varint height > 0.
         // Exclude ISOBMFF (ftyp at offset 4) which also starts with 00 00.
-        if (h[0] == 0x00 && h[1] == 0x00 && len >= 8
-                && !(h[4] == 'f' && h[5] == 't' && h[6] == 'y' && h[7] == 'p'))
+        // Exclude ICO (00 00 01 00) and CUR (00 00 02 00) which share the 00 00 prefix.
+        // Require width varint byte (h[2]) is non-zero — a zero-width image is invalid.
+        if (h[0] == 0x00 && h[1] == 0x00 && len >= 4 && h[2] != 0x00
+                && !(h[2] == 0x01 && h[3] == 0x00)   // not ICO
+                && !(h[2] == 0x02 && h[3] == 0x00)   // not CUR
+                && !(len >= 8 && h[4] == 'f' && h[5] == 't' && h[6] == 'y' && h[7] == 'p'))
             return true;
 
         return false;

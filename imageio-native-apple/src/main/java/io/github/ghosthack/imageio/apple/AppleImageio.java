@@ -46,24 +46,23 @@ public final class AppleImageio {
         return AppleNative.canDecode(header, length);
     }
 
+    private static final Set<String> ACTIVE_FORMATS  = Set.of(FormatRegistry.activeFormatNames());
+    private static final Set<String> ACTIVE_SUFFIXES = Set.of(FormatRegistry.activeSuffixes());
+
     /**
      * Returns the set of format names currently active, as controlled by
      * the {@code imageio.native.formats} system property.
      *
      * @return unmodifiable set of lower-case format names (e.g. "heic", "avif", "webp")
      */
-    public static Set<String> activeFormats() {
-        return Set.of(FormatRegistry.activeFormatNames());
-    }
+    public static Set<String> activeFormats() { return ACTIVE_FORMATS; }
 
     /**
      * Returns the set of file suffixes currently active.
      *
      * @return unmodifiable set of lower-case suffixes (e.g. "heic", "avif", "webp", "jp2")
      */
-    public static Set<String> activeSuffixes() {
-        return Set.of(FormatRegistry.activeSuffixes());
-    }
+    public static Set<String> activeSuffixes() { return ACTIVE_SUFFIXES; }
 
     /**
      * Returns image dimensions without full pixel decode.
