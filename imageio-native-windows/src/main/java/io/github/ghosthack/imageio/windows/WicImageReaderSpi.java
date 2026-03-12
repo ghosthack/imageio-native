@@ -1,9 +1,8 @@
 package io.github.ghosthack.imageio.windows;
 
+import io.github.ghosthack.imageio.common.NativeImageReaderSpi;
+
 import javax.imageio.ImageReader;
-import javax.imageio.spi.ImageReaderSpi;
-import javax.imageio.stream.ImageInputStream;
-import java.io.IOException;
 import java.util.Locale;
 
 /**
@@ -15,69 +14,28 @@ import java.util.Locale;
  * RAW, and all standard formats).
  * <p>
  * Which formats are actually claimed is controlled by the system property
- * {@code imageio.native.formats} — see {@link FormatRegistry} for details.  The
- * default ({@code supplemental}) claims only formats that Java's built-in
+ * {@code imageio.native.formats} — see
+ * {@link io.github.ghosthack.imageio.common.FormatRegistry} for details.
+ * The default ({@code supplemental}) claims only formats that Java's built-in
  * ImageIO does not already handle.
  * <p>
  * This SPI loads on all platforms (so the module compiles everywhere), but
  * {@link #canDecodeInput} always returns {@code false} on non-Windows systems.
  */
-public class WicImageReaderSpi extends ImageReaderSpi {
+public class WicImageReaderSpi extends NativeImageReaderSpi {
 
-    private static final String VENDOR  = "imageio-native";
-    private static final String VERSION = "1.0";
-
-    /**
-     * Constructs the SPI with format metadata derived from {@link FormatRegistry}.
-     * If {@code imageio.native.formats=none}, the SPI still loads but {@link #canDecodeInput}
-     * always returns {@code false}.
-     */
     public WicImageReaderSpi() {
-        super(VENDOR, VERSION,
-                FormatRegistry.activeFormatNames(),
-                FormatRegistry.activeSuffixes(),
-                FormatRegistry.activeMimeTypes(),
-                WicImageReader.class.getName(),
-                new Class<?>[]{ImageInputStream.class},
-                null,   // writerSpiNames
-                false, null, null, null, null,
-                false, null, null, null, null);
+        super(WicImageReader.class.getName(), FormatRegistry.INSTANCE);
     }
 
-    /**
-     * Probes whether WIC can decode the input.
-     * <p>
-     * On non-Windows platforms, always returns {@code false}.
-     * <p>
-     * In {@code supplemental} mode (the default), the probe first rejects
-     * formats Java can handle natively (JPEG, PNG, GIF, BMP, TIFF) via fast
-     * magic-byte checks, then asks WIC for everything else.
-     * <p>
-     * In {@code all} mode, WIC is consulted for every input.
-     */
     @Override
-    public boolean canDecodeInput(Object source) throws IOException {
-        if (!WicNative.IS_WINDOWS) return false;
-        if (!FormatRegistry.isEnabled()) return false;
-        if (!(source instanceof ImageInputStream stream)) return false;
+    protected boolean isOsSupported() {
+        return WicNative.IS_WINDOWS;
+    }
 
-        stream.mark();
-        try {
-            byte[] header = new byte[4096];
-            int n = stream.read(header, 0, header.length);
-            if (n <= 0) return false;
-
-            // In supplemental mode, skip formats Java already handles
-            if (FormatRegistry.shouldExcludeJavaNative()
-                    && FormatDetector.isJavaNativeFormat(header, n)) {
-                return false;
-            }
-
-            // Ask WIC if it can create a decoder for this data
-            return WicNative.canDecode(header, n);
-        } finally {
-            stream.reset();
-        }
+    @Override
+    protected boolean nativeCanDecode(byte[] header, int len) {
+        return WicNative.canDecode(header, len);
     }
 
     @Override

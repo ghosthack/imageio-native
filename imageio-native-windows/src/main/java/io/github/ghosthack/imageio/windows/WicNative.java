@@ -31,7 +31,17 @@ final class WicNative {
 
     // ── HRESULT helpers ─────────────────────────────────────────────────
 
-    private static final int S_OK = 0;
+    private static final int S_OK    = 0;
+    // S_FALSE (0x1): COM already initialized on this thread as MTA — usable, don't uninit.
+    // RPC_E_CHANGED_MODE (0x80010106): thread is STA — still usable for WIC
+    // (WICImagingFactory is ThreadingModel=Both), don't uninit.
+
+    /**
+     * Maximum number of pixels (width * height) we are willing to decode.
+     * Prevents OOM on malicious/corrupt images declaring huge dimensions.
+     * Default: 256 megapixels (e.g. 16384 x 16384).
+     */
+    static final long MAX_PIXELS = Long.getLong("imageio.native.maxPixels", 256L * 1024 * 1024);
 
     private static boolean failed(int hr) { return hr < 0; }
 
@@ -63,31 +73,16 @@ final class WicNative {
         return seg;
     }
 
-    // ── Well-known GUIDs ────────────────────────────────────────────────
+    // ── Well-known GUIDs (allocated once in global arena) ──────────────
 
-    /** Allocate CLSID_WICImagingFactory {CACAF262-9370-4615-A13B-9F5539DA4C0A} */
-    private static MemorySegment clsidFactory(Arena arena) {
-        return guid(arena, 0xCACAF262, (short) 0x9370, (short) 0x4615,
-                new byte[]{(byte) 0xA1, 0x3B, (byte) 0x9F, 0x55, 0x39, (byte) 0xDA, 0x4C, 0x0A});
-    }
+    /** CLSID_WICImagingFactory {CACAF262-9370-4615-A13B-9F5539DA4C0A} */
+    private static final MemorySegment CLSID_WIC_FACTORY;
 
-    /** Allocate IID_IWICImagingFactory {EC5EC8A9-C395-4314-9C77-54D7A935FF70} */
-    private static MemorySegment iidFactory(Arena arena) {
-        return guid(arena, 0xEC5EC8A9, (short) 0xC395, (short) 0x4314,
-                new byte[]{(byte) 0x9C, 0x77, 0x54, (byte) 0xD7, (byte) 0xA9, 0x35, (byte) 0xFF, 0x70});
-    }
+    /** IID_IWICImagingFactory {EC5EC8A9-C395-4314-9C77-54D7A935FF70} */
+    private static final MemorySegment IID_WIC_FACTORY;
 
-    /** Allocate GUID_WICPixelFormat32bppPBGRA {6FDDC324-4E03-4BFE-B185-3D77768DC910} */
-    private static MemorySegment pixelFormatPBGRA(Arena arena) {
-        return guid(arena, 0x6FDDC324, (short) 0x4E03, (short) 0x4BFE,
-                new byte[]{(byte) 0xB1, (byte) 0x85, 0x3D, 0x77, 0x76, (byte) 0x8D, (byte) 0xC9, 0x10});
-    }
-
-    /** Allocate GUID_VendorMicrosoft {F0E749CA-EDEF-4589-A73A-EE0E626A2B17} */
-    private static MemorySegment vendorMicrosoft(Arena arena) {
-        return guid(arena, 0xF0E749CA, (short) 0xEDEF, (short) 0x4589,
-                new byte[]{(byte) 0xA7, 0x3A, (byte) 0xEE, 0x0E, 0x62, 0x6A, 0x2B, 0x17});
-    }
+    /** GUID_WICPixelFormat32bppPBGRA {6FDDC324-4E03-4BFE-B185-3D77768DC910} */
+    private static final MemorySegment GUID_PIXEL_FORMAT_PBGRA;
 
     // ── COM constants ───────────────────────────────────────────────────
 
@@ -105,6 +100,8 @@ final class WicNative {
 
     /** WICBitmapPaletteTypeCustom = 0 */
     private static final int WICBitmapPaletteTypeCustom = 0;
+
+
 
     // ── DLL loading and ole32 downcalls ─────────────────────────────────
 
@@ -139,11 +136,23 @@ final class WicNative {
             // void CoUninitialize(void)
             CoUninitialize = downcallOle32("CoUninitialize",
                     FunctionDescriptor.ofVoid());
+
+            // Allocate constant GUIDs once in the global arena
+            Arena global = Arena.global();
+            CLSID_WIC_FACTORY = guid(global, 0xCACAF262, (short) 0x9370, (short) 0x4615,
+                    new byte[]{(byte) 0xA1, 0x3B, (byte) 0x9F, 0x55, 0x39, (byte) 0xDA, 0x4C, 0x0A});
+            IID_WIC_FACTORY = guid(global, 0xEC5EC8A9, (short) 0xC395, (short) 0x4314,
+                    new byte[]{(byte) 0x9C, 0x77, 0x54, (byte) 0xD7, (byte) 0xA9, 0x35, (byte) 0xFF, 0x70});
+            GUID_PIXEL_FORMAT_PBGRA = guid(global, 0x6FDDC324, (short) 0x4E03, (short) 0x4BFE,
+                    new byte[]{(byte) 0xB1, (byte) 0x85, 0x3D, 0x77, 0x76, (byte) 0x8D, (byte) 0xC9, 0x10});
         } else {
             OLE32 = null;
             CoInitializeEx = null;
             CoCreateInstance = null;
             CoUninitialize = null;
+            CLSID_WIC_FACTORY = null;
+            IID_WIC_FACTORY = null;
+            GUID_PIXEL_FORMAT_PBGRA = null;
         }
     }
 
@@ -241,8 +250,42 @@ final class WicNative {
         if (comObj != null && !MemorySegment.NULL.equals(comObj)) {
             try {
                 IUnknown_Release.invokeExact(vtable(comObj, 2), comObj);
-            } catch (Throwable ignored) {}
+            } catch (Throwable ignored) { /* invokeExact signature; native release cannot throw */ }
         }
+    }
+
+    // ── Cached WIC factory ────────────────────────────────────────────────
+    // WICImagingFactory is ThreadingModel=Both (thread-safe). We create it
+    // once on first access and reuse it for all subsequent calls.  COM must
+    // still be initialised on each calling thread (CoInitializeEx is cheap).
+
+    /**
+     * Lazy holder — the factory is created exactly once, on first access.
+     * A permanent CoInitializeEx on the loading thread keeps the COM
+     * library loaded for the lifetime of the JVM.
+     */
+    private static class FactoryHolder {
+        static final MemorySegment INSTANCE = createFactory();
+
+        private static MemorySegment createFactory() {
+            try {
+                // Permanent COM init on this thread (never balanced by CoUninitialize)
+                CoInitializeEx.invokeExact(MemorySegment.NULL, COINIT_MULTITHREADED);
+                MemorySegment ppFactory = Arena.global().allocate(ValueLayout.ADDRESS);
+                int hr = (int) CoCreateInstance.invokeExact(
+                        CLSID_WIC_FACTORY, MemorySegment.NULL,
+                        CLSCTX_INPROC_SERVER, IID_WIC_FACTORY, ppFactory);
+                if (hr < 0) return MemorySegment.NULL;
+                return ppFactory.get(ValueLayout.ADDRESS, 0);
+            } catch (Throwable t) {
+                return MemorySegment.NULL;
+            }
+        }
+    }
+
+    /** Returns the cached WIC imaging factory (created on first call). */
+    private static MemorySegment cachedFactory() {
+        return FactoryHolder.INSTANCE;
     }
 
     // ── Header probe: can WIC decode this data? ─────────────────────────
@@ -257,27 +300,20 @@ final class WicNative {
     static boolean canDecode(byte[] header, int len) {
         if (!IS_WINDOWS) return false;
 
-        MemorySegment factory = MemorySegment.NULL;
         MemorySegment stream = MemorySegment.NULL;
         MemorySegment decoder = MemorySegment.NULL;
 
         try (Arena arena = Arena.ofConfined()) {
-            // COM init (may already be initialised — ignore RPC_E_CHANGED_MODE)
             int hrInit = (int) CoInitializeEx.invokeExact(MemorySegment.NULL, COINIT_MULTITHREADED);
             boolean weInitialisedCom = (hrInit == S_OK);
 
             try {
-                // Create WIC factory
-                MemorySegment ppFactory = arena.allocate(ValueLayout.ADDRESS);
-                int hr = (int) CoCreateInstance.invokeExact(
-                        clsidFactory(arena), MemorySegment.NULL,
-                        CLSCTX_INPROC_SERVER, iidFactory(arena), ppFactory);
-                if (failed(hr)) return false;
-                factory = ppFactory.get(ValueLayout.ADDRESS, 0);
+                MemorySegment factory = cachedFactory();
+                if (MemorySegment.NULL.equals(factory)) return false;
 
                 // Create IWICStream
                 MemorySegment ppStream = arena.allocate(ValueLayout.ADDRESS);
-                hr = (int) Factory_CreateStream.invokeExact(
+                int hr = (int) Factory_CreateStream.invokeExact(
                         vtable(factory, 14), factory, ppStream);
                 if (failed(hr)) return false;
                 stream = ppStream.get(ValueLayout.ADDRESS, 0);
@@ -302,7 +338,6 @@ final class WicNative {
             } finally {
                 release(decoder);
                 release(stream);
-                release(factory);
                 if (weInitialisedCom) {
                     CoUninitialize.invokeExact();
                 }
@@ -328,7 +363,6 @@ final class WicNative {
         if (!IS_WINDOWS)
             throw new javax.imageio.IIOException("WIC is only available on Windows");
 
-        MemorySegment factory = MemorySegment.NULL;
         MemorySegment stream = MemorySegment.NULL;
         MemorySegment decoder = MemorySegment.NULL;
         MemorySegment frame = MemorySegment.NULL;
@@ -338,12 +372,9 @@ final class WicNative {
             boolean weInitialisedCom = (hrInit == S_OK);
 
             try {
-                MemorySegment ppFactory = arena.allocate(ValueLayout.ADDRESS);
-                check((int) CoCreateInstance.invokeExact(
-                        clsidFactory(arena), MemorySegment.NULL,
-                        CLSCTX_INPROC_SERVER, iidFactory(arena), ppFactory),
-                        "CoCreateInstance(WICImagingFactory) failed");
-                factory = ppFactory.get(ValueLayout.ADDRESS, 0);
+                MemorySegment factory = cachedFactory();
+                if (MemorySegment.NULL.equals(factory))
+                    throw new javax.imageio.IIOException("Failed to create WIC factory");
 
                 MemorySegment ppStream = arena.allocate(ValueLayout.ADDRESS);
                 check((int) Factory_CreateStream.invokeExact(
@@ -385,7 +416,6 @@ final class WicNative {
                 release(frame);
                 release(decoder);
                 release(stream);
-                release(factory);
                 if (weInitialisedCom) {
                     CoUninitialize.invokeExact();
                 }
@@ -426,7 +456,6 @@ final class WicNative {
         if (!IS_WINDOWS)
             throw new javax.imageio.IIOException("WIC decoding is only available on Windows");
 
-        MemorySegment factory = MemorySegment.NULL;
         MemorySegment stream = MemorySegment.NULL;
         MemorySegment decoder = MemorySegment.NULL;
         MemorySegment frame = MemorySegment.NULL;
@@ -438,13 +467,10 @@ final class WicNative {
             boolean weInitialisedCom = (hrInit == S_OK);
 
             try {
-                // 2. Create WIC factory
-                MemorySegment ppFactory = arena.allocate(ValueLayout.ADDRESS);
-                check((int) CoCreateInstance.invokeExact(
-                        clsidFactory(arena), MemorySegment.NULL,
-                        CLSCTX_INPROC_SERVER, iidFactory(arena), ppFactory),
-                        "CoCreateInstance(WICImagingFactory) failed");
-                factory = ppFactory.get(ValueLayout.ADDRESS, 0);
+                // 2. Cached WIC factory
+                MemorySegment factory = cachedFactory();
+                if (MemorySegment.NULL.equals(factory))
+                    throw new javax.imageio.IIOException("Failed to create WIC factory");
 
                 // 3. Create IWICStream and initialise from memory
                 MemorySegment ppStream = arena.allocate(ValueLayout.ADDRESS);
@@ -483,7 +509,7 @@ final class WicNative {
 
                 check((int) Converter_Initialize.invokeExact(
                         vtable(converter, 8), converter, frame,
-                        pixelFormatPBGRA(arena),
+                        GUID_PIXEL_FORMAT_PBGRA,
                         WICBitmapDitherTypeNone,
                         MemorySegment.NULL, // no palette
                         0.0,                // alpha threshold
@@ -500,15 +526,20 @@ final class WicNative {
                 int h = pHeight.get(ValueLayout.JAVA_INT, 0);
                 if (w <= 0 || h <= 0)
                     throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
+                long totalPixels = (long) w * h;
+                if (totalPixels > MAX_PIXELS)
+                    throw new javax.imageio.IIOException(
+                            "Image too large: " + w + "x" + h + " (" + totalPixels
+                                    + " pixels exceeds limit of " + MAX_PIXELS + ")");
 
-                // 8. Copy pixels
-                int stride = w * 4;
-                int bufSize = stride * h;
+                // 8. Copy pixels (use long arithmetic to avoid int overflow)
+                long stride = (long) w * 4;
+                long bufSize = stride * h;
                 MemorySegment pixelData = arena.allocate(bufSize, 16);
                 check((int) Source_CopyPixels.invokeExact(
                         vtable(converter, 7), converter,
-                        MemorySegment.NULL, // entire bitmap (no sub-rect)
-                        stride, bufSize, pixelData),
+                        MemorySegment.NULL, // entire bitmap
+                        (int) stride, (int) bufSize, pixelData),
                         "IWICBitmapSource::CopyPixels failed");
 
                 // 9. Build BufferedImage
@@ -523,7 +554,6 @@ final class WicNative {
                 release(frame);
                 release(decoder);
                 release(stream);
-                release(factory);
                 if (weInitialisedCom) {
                     CoUninitialize.invokeExact();
                 }

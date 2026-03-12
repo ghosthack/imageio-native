@@ -23,6 +23,13 @@ final class AppleNative {
     static final boolean IS_MACOS = System.getProperty("os.name", "")
             .toLowerCase(java.util.Locale.ROOT).contains("mac");
 
+    /**
+     * Maximum number of pixels (width * height) we are willing to decode.
+     * Prevents OOM on malicious/corrupt images declaring huge dimensions.
+     * Default: 256 megapixels (e.g. 16384 x 16384).
+     */
+    static final long MAX_PIXELS = Long.getLong("imageio.native.maxPixels", 256L * 1024 * 1024);
+
     // ── Constants ───────────────────────────────────────────────────────
 
     /** kCGImageAlphaPremultipliedFirst = 2 */
@@ -54,6 +61,13 @@ final class AppleNative {
 
     // CFDataRef CFDataCreate(CFAllocatorRef allocator, const UInt8 *bytes, CFIndex length)
     private static final MethodHandle CFDataCreate;
+
+    // CFDataRef CFDataCreateWithBytesNoCopy(CFAllocatorRef allocator, const UInt8 *bytes,
+    //     CFIndex length, CFAllocatorRef bytesDeallocator)
+    private static final MethodHandle CFDataCreateWithBytesNoCopy;
+
+    // kCFAllocatorNull — passed as bytesDeallocator to prevent CFData from freeing the buffer
+    private static final MemorySegment kCFAllocatorNull;
 
     // void CFRelease(CFTypeRef cf)
     private static final MethodHandle CFRelease;
@@ -93,6 +107,14 @@ final class AppleNative {
 
             CFDataCreate = downcall("CFDataCreate",
                     FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+            CFDataCreateWithBytesNoCopy = downcall("CFDataCreateWithBytesNoCopy",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+            MemorySegment cfAllocatorNullSym = LOOKUP.find("kCFAllocatorNull")
+                    .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: kCFAllocatorNull"));
+            kCFAllocatorNull = cfAllocatorNullSym
+                    .reinterpret(ValueLayout.ADDRESS.byteSize())
+                    .get(ValueLayout.ADDRESS, 0);
             CFRelease = downcall("CFRelease",
                     FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
             CGImageSourceCreateWithData = downcall("CGImageSourceCreateWithData",
@@ -117,6 +139,8 @@ final class AppleNative {
         } else {
             LOOKUP = null;
             CFDataCreate = null;
+            CFDataCreateWithBytesNoCopy = null;
+            kCFAllocatorNull = null;
             CFRelease = null;
             CGImageSourceCreateWithData = null;
             CGImageSourceCreateImageAtIndex = null;
@@ -146,7 +170,7 @@ final class AppleNative {
         if (ref != null && !MemorySegment.NULL.equals(ref)) {
             try {
                 CFRelease.invokeExact(ref);
-            } catch (Throwable ignored) { }
+            } catch (Throwable ignored) { /* invokeExact signature; native release cannot throw */ }
         }
     }
 
@@ -163,27 +187,29 @@ final class AppleNative {
     static boolean canDecode(byte[] header, int len) {
         if (!IS_MACOS) return false;
 
-        MemorySegment cfData = MemorySegment.NULL;
-        MemorySegment imgSrc = MemorySegment.NULL;
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment buf = arena.allocate(len);
-            MemorySegment.copy(header, 0, buf, ValueLayout.JAVA_BYTE, 0, len);
-            cfData = (MemorySegment) CFDataCreate.invokeExact(
-                    MemorySegment.NULL, buf, (long) len);
-            if (MemorySegment.NULL.equals(cfData)) return false;
+            MemorySegment cfData = MemorySegment.NULL;
+            MemorySegment imgSrc = MemorySegment.NULL;
+            try {
+                MemorySegment buf = arena.allocate(len);
+                MemorySegment.copy(header, 0, buf, ValueLayout.JAVA_BYTE, 0, len);
+                cfData = (MemorySegment) CFDataCreateWithBytesNoCopy.invokeExact(
+                        MemorySegment.NULL, buf, (long) len, kCFAllocatorNull);
+                if (MemorySegment.NULL.equals(cfData)) return false;
 
-            imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
-                    cfData, MemorySegment.NULL);
-            if (MemorySegment.NULL.equals(imgSrc)) return false;
+                imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
+                        cfData, MemorySegment.NULL);
+                if (MemorySegment.NULL.equals(imgSrc)) return false;
 
-            int status = (int) CGImageSourceGetStatus.invokeExact(imgSrc);
-            // status >= kCGImageStatusIncomplete means the format was identified
-            return status >= kCGImageStatusIncomplete;
-        } catch (Throwable t) {
-            return false;
-        } finally {
-            release(imgSrc);
-            release(cfData);
+                int status = (int) CGImageSourceGetStatus.invokeExact(imgSrc);
+                // status >= kCGImageStatusIncomplete means the format was identified
+                return status >= kCGImageStatusIncomplete;
+            } catch (Throwable t) {
+                return false;
+            } finally {
+                release(imgSrc);
+                release(cfData);
+            }
         }
     }
 
@@ -203,41 +229,42 @@ final class AppleNative {
         if (!IS_MACOS)
             throw new javax.imageio.IIOException("Apple ImageIO is only available on macOS");
 
-        MemorySegment cfData = MemorySegment.NULL;
-        MemorySegment imgSrc = MemorySegment.NULL;
-        MemorySegment cgImage = MemorySegment.NULL;
-
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
-            cfData = (MemorySegment) CFDataCreate.invokeExact(
-                    MemorySegment.NULL, nativeBuf, (long) imageData.length);
-            if (MemorySegment.NULL.equals(cfData))
-                throw new javax.imageio.IIOException("CFDataCreate returned NULL");
+            MemorySegment cfData = MemorySegment.NULL;
+            MemorySegment imgSrc = MemorySegment.NULL;
+            MemorySegment cgImage = MemorySegment.NULL;
+            try {
+                MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
+                cfData = (MemorySegment) CFDataCreateWithBytesNoCopy.invokeExact(
+                        MemorySegment.NULL, nativeBuf, (long) imageData.length, kCFAllocatorNull);
+                if (MemorySegment.NULL.equals(cfData))
+                    throw new javax.imageio.IIOException("CFDataCreateWithBytesNoCopy returned NULL");
 
-            imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
-                    cfData, MemorySegment.NULL);
-            if (MemorySegment.NULL.equals(imgSrc))
-                throw new javax.imageio.IIOException("Unsupported image format");
+                imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
+                        cfData, MemorySegment.NULL);
+                if (MemorySegment.NULL.equals(imgSrc))
+                    throw new javax.imageio.IIOException("Unsupported image format");
 
-            cgImage = (MemorySegment) CGImageSourceCreateImageAtIndex.invokeExact(
-                    imgSrc, 0L, MemorySegment.NULL);
-            if (MemorySegment.NULL.equals(cgImage))
-                throw new javax.imageio.IIOException("Failed to read image metadata");
+                cgImage = (MemorySegment) CGImageSourceCreateImageAtIndex.invokeExact(
+                        imgSrc, 0L, MemorySegment.NULL);
+                if (MemorySegment.NULL.equals(cgImage))
+                    throw new javax.imageio.IIOException("Failed to read image metadata");
 
-            int w = (int) (long) CGImageGetWidth.invokeExact(cgImage);
-            int h = (int) (long) CGImageGetHeight.invokeExact(cgImage);
-            if (w <= 0 || h <= 0)
-                throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
+                int w = (int) (long) CGImageGetWidth.invokeExact(cgImage);
+                int h = (int) (long) CGImageGetHeight.invokeExact(cgImage);
+                if (w <= 0 || h <= 0)
+                    throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
 
-            return new int[]{w, h};
-        } catch (java.io.IOException e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new javax.imageio.IIOException("Native image size query failed", t);
-        } finally {
-            release(cgImage);
-            release(imgSrc);
-            release(cfData);
+                return new int[]{w, h};
+            } catch (java.io.IOException e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new javax.imageio.IIOException("Native image size query failed", t);
+            } finally {
+                release(cgImage);
+                release(imgSrc);
+                release(cfData);
+            }
         }
     }
 
@@ -255,78 +282,85 @@ final class AppleNative {
         if (!IS_MACOS)
             throw new javax.imageio.IIOException("Apple ImageIO decoding is only available on macOS");
 
-        MemorySegment cfData = MemorySegment.NULL;
-        MemorySegment imgSrc = MemorySegment.NULL;
-        MemorySegment cgImage = MemorySegment.NULL;
-        MemorySegment colorSpace = MemorySegment.NULL;
-        MemorySegment ctx = MemorySegment.NULL;
-
         try (Arena arena = Arena.ofConfined()) {
-            // 1. Copy bytes into native memory and wrap as CFData
-            MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
-            cfData = (MemorySegment) CFDataCreate.invokeExact(
-                    MemorySegment.NULL,       // default allocator
-                    nativeBuf,
-                    (long) imageData.length);
-            if (MemorySegment.NULL.equals(cfData))
-                throw new javax.imageio.IIOException("CFDataCreate returned NULL");
+            MemorySegment cfData = MemorySegment.NULL;
+            MemorySegment imgSrc = MemorySegment.NULL;
+            MemorySegment cgImage = MemorySegment.NULL;
+            MemorySegment colorSpace = MemorySegment.NULL;
+            MemorySegment ctx = MemorySegment.NULL;
+            try {
+                // 1. Copy bytes into native memory and wrap as CFData (no-copy: arena owns the buffer)
+                MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
+                cfData = (MemorySegment) CFDataCreateWithBytesNoCopy.invokeExact(
+                        MemorySegment.NULL,       // default allocator
+                        nativeBuf,
+                        (long) imageData.length,
+                        kCFAllocatorNull);        // arena manages the buffer lifetime
+                if (MemorySegment.NULL.equals(cfData))
+                    throw new javax.imageio.IIOException("CFDataCreateWithBytesNoCopy returned NULL");
 
-            // 2. Create CGImageSource
-            imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
-                    cfData, MemorySegment.NULL);
-            if (MemorySegment.NULL.equals(imgSrc))
-                throw new javax.imageio.IIOException("CGImageSourceCreateWithData returned NULL – unsupported format");
+                // 2. Create CGImageSource
+                imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
+                        cfData, MemorySegment.NULL);
+                if (MemorySegment.NULL.equals(imgSrc))
+                    throw new javax.imageio.IIOException("CGImageSourceCreateWithData returned NULL – unsupported format");
 
-            // 3. Decode image at index 0
-            cgImage = (MemorySegment) CGImageSourceCreateImageAtIndex.invokeExact(
-                    imgSrc, 0L, MemorySegment.NULL);
-            if (MemorySegment.NULL.equals(cgImage))
-                throw new javax.imageio.IIOException("CGImageSourceCreateImageAtIndex returned NULL – decode failed");
+                // 3. Decode image at index 0
+                cgImage = (MemorySegment) CGImageSourceCreateImageAtIndex.invokeExact(
+                        imgSrc, 0L, MemorySegment.NULL);
+                if (MemorySegment.NULL.equals(cgImage))
+                    throw new javax.imageio.IIOException("CGImageSourceCreateImageAtIndex returned NULL – decode failed");
 
-            // 4. Dimensions
-            long w = (long) CGImageGetWidth.invokeExact(cgImage);
-            long h = (long) CGImageGetHeight.invokeExact(cgImage);
-            if (w <= 0 || h <= 0)
-                throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
+                // 4. Dimensions
+                long w = (long) CGImageGetWidth.invokeExact(cgImage);
+                long h = (long) CGImageGetHeight.invokeExact(cgImage);
+                if (w <= 0 || h <= 0)
+                    throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
+                long totalPixels = w * h;
+                if (totalPixels > MAX_PIXELS)
+                    throw new javax.imageio.IIOException(
+                            "Image too large: " + w + "x" + h + " (" + totalPixels
+                                    + " pixels exceeds limit of " + MAX_PIXELS + ")");
 
-            // 5. Device-RGB colour space
-            colorSpace = (MemorySegment) CGColorSpaceCreateDeviceRGB.invokeExact();
+                // 5. Device-RGB colour space
+                colorSpace = (MemorySegment) CGColorSpaceCreateDeviceRGB.invokeExact();
 
-            // 6. Allocate pixel buffer and create bitmap context
-            long bytesPerRow = w * 4;
-            MemorySegment pixelData = arena.allocate(bytesPerRow * h, 16);
-            ctx = (MemorySegment) CGBitmapContextCreate.invokeExact(
-                    pixelData, w, h, 8L, bytesPerRow, colorSpace, BITMAP_INFO);
-            if (MemorySegment.NULL.equals(ctx))
-                throw new javax.imageio.IIOException("CGBitmapContextCreate returned NULL");
+                // 6. Allocate pixel buffer and create bitmap context
+                long bytesPerRow = w * 4;
+                MemorySegment pixelData = arena.allocate(bytesPerRow * h, 16);
+                ctx = (MemorySegment) CGBitmapContextCreate.invokeExact(
+                        pixelData, w, h, 8L, bytesPerRow, colorSpace, BITMAP_INFO);
+                if (MemorySegment.NULL.equals(ctx))
+                    throw new javax.imageio.IIOException("CGBitmapContextCreate returned NULL");
 
-            // 7. Draw the decoded image into the bitmap context
-            MemorySegment rect = arena.allocate(CGRECT);
-            rect.set(ValueLayout.JAVA_DOUBLE, 0, 0.0);            // origin.x
-            rect.set(ValueLayout.JAVA_DOUBLE, 8, 0.0);            // origin.y
-            rect.set(ValueLayout.JAVA_DOUBLE, 16, (double) w);    // size.width
-            rect.set(ValueLayout.JAVA_DOUBLE, 24, (double) h);    // size.height
-            CGContextDrawImage.invokeExact(ctx, rect, cgImage);
+                // 7. Draw the decoded image into the bitmap context
+                MemorySegment rect = arena.allocate(CGRECT);
+                rect.set(ValueLayout.JAVA_DOUBLE, 0, 0.0);            // origin.x
+                rect.set(ValueLayout.JAVA_DOUBLE, 8, 0.0);            // origin.y
+                rect.set(ValueLayout.JAVA_DOUBLE, 16, (double) w);    // size.width
+                rect.set(ValueLayout.JAVA_DOUBLE, 24, (double) h);    // size.height
+                CGContextDrawImage.invokeExact(ctx, rect, cgImage);
 
-            // 8. Copy pixels into a BufferedImage (TYPE_INT_ARGB_PRE)
-            //    Memory layout: BGRA (little-endian) → LE int reads as 0xAARRGGBB → matches ARGB_PRE.
-            int iw = (int) w;
-            int ih = (int) h;
-            BufferedImage result = new BufferedImage(iw, ih, BufferedImage.TYPE_INT_ARGB_PRE);
-            int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
-            MemorySegment.copy(pixelData, ValueLayout.JAVA_INT, 0, dest, 0, dest.length);
+                // 8. Copy pixels into a BufferedImage (TYPE_INT_ARGB_PRE)
+                //    Memory layout: BGRA (little-endian) → LE int reads as 0xAARRGGBB → matches ARGB_PRE.
+                int iw = (int) w;
+                int ih = (int) h;
+                BufferedImage result = new BufferedImage(iw, ih, BufferedImage.TYPE_INT_ARGB_PRE);
+                int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
+                MemorySegment.copy(pixelData, ValueLayout.JAVA_INT, 0, dest, 0, dest.length);
 
-            return result;
-        } catch (java.io.IOException e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new javax.imageio.IIOException("Native image decode failed", t);
-        } finally {
-            release(ctx);
-            release(colorSpace);
-            release(cgImage);
-            release(imgSrc);
-            release(cfData);
+                return result;
+            } catch (java.io.IOException e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new javax.imageio.IIOException("Native image decode failed", t);
+            } finally {
+                release(ctx);
+                release(colorSpace);
+                release(cgImage);
+                release(imgSrc);
+                release(cfData);
+            }
         }
     }
 }

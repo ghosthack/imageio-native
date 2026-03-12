@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * End-to-end tests for the Apple-backed HEIC, AVIF and WEBP ImageIO readers.
  * <p>
- * Each test loads a 4×4 test fixture with four solid-colour quadrants
+ * Each test loads an 8×8 test fixture with four solid-colour quadrants
  * (red / green / blue / white) and verifies that the decoded
  * {@link BufferedImage} has the expected dimensions and pixel colours.
  * <p>
@@ -40,7 +40,7 @@ class AppleImageReaderTest {
     // ── ImageIO.read round-trip ─────────────────────────────────────────
 
     @ParameterizedTest(name = "ImageIO.read({0})")
-    @CsvSource({"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @CsvSource({"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void readViaImageIO(String resource) throws IOException {
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
             assertNotNull(is, "test fixture missing: " + resource);
@@ -54,7 +54,7 @@ class AppleImageReaderTest {
     // ── SPI lookup by format name ───────────────────────────────────────
 
     @ParameterizedTest(name = "getReadersByFormatName({1})")
-    @CsvSource({"test4x4.heic, heic", "test4x4.avif, avif", "test4x4.webp, webp"})
+    @CsvSource({"test8x8.heic, heic", "test8x8.avif, avif", "test8x8.webp, webp"})
     void readerLookupByFormatName(String resource, String formatName) throws IOException {
         Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName(formatName);
         assertTrue(readers.hasNext(), "No reader registered for format: " + formatName);
@@ -64,8 +64,8 @@ class AppleImageReaderTest {
              ImageInputStream iis = ImageIO.createImageInputStream(is)) {
             assertNotNull(iis);
             reader.setInput(iis);
-            assertEquals(4, reader.getWidth(0));
-            assertEquals(4, reader.getHeight(0));
+            assertEquals(8, reader.getWidth(0));
+            assertEquals(8, reader.getHeight(0));
             assertEquals(1, reader.getNumImages(true));
 
             BufferedImage img = reader.read(0);
@@ -112,11 +112,11 @@ class AppleImageReaderTest {
     void pngReadDoesNotUseAppleReader() throws IOException {
         // In default "supplemental" mode, PNG should fall through to Java's
         // built-in PNGImageReader, not our AppleImageReader.
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test4x4.png")) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png")) {
             assertNotNull(is);
             BufferedImage img = ImageIO.read(is);
             assertNotNull(img, "PNG should still be readable");
-            assertEquals(4, img.getWidth());
+            assertEquals(8, img.getWidth());
             // We don't assert the reader class because Java's reader handles it
         }
     }
@@ -124,21 +124,21 @@ class AppleImageReaderTest {
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static void assertDimensions(BufferedImage img) {
-        assertEquals(4, img.getWidth(),  "width");
-        assertEquals(4, img.getHeight(), "height");
+        assertEquals(8, img.getWidth(),  "width");
+        assertEquals(8, img.getHeight(), "height");
     }
 
     /**
-     * Checks that each 2×2 quadrant's centre pixel is close to the expected
-     * colour.  We allow a tolerance of 40 per channel because HEIC and AVIF
-     * are lossy (even at max quality) on a 4×4 image.
+     * Checks that each 4×4 quadrant's corner pixel is close to the expected
+     * colour.  We allow a tolerance per channel because HEIC and AVIF
+     * are lossy (even at max quality) on a small image.
      */
     private static void assertQuadrantColours(BufferedImage img) {
         // Sample one pixel from each quadrant
         assertColourClose("top-left (red)",     RED,   img.getRGB(0, 0));
-        assertColourClose("top-right (green)",  GREEN, img.getRGB(3, 0));
-        assertColourClose("bottom-left (blue)", BLUE,  img.getRGB(0, 3));
-        assertColourClose("bottom-right (white)", WHITE, img.getRGB(3, 3));
+        assertColourClose("top-right (green)",  GREEN, img.getRGB(7, 0));
+        assertColourClose("bottom-left (blue)", BLUE,  img.getRGB(0, 7));
+        assertColourClose("bottom-right (white)", WHITE, img.getRGB(7, 7));
     }
 
 }

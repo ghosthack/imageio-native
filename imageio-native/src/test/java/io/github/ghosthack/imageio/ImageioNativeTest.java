@@ -88,7 +88,7 @@ class ImageioNativeTest {
     @Test
     void canDecodeHeic() throws IOException {
         if (!ImageioNative.isAvailable()) return;
-        byte[] data = loadResource("test4x4.heic");
+        byte[] data = loadResource("test8x8.heic");
         assumeTrue(ImageioNative.canDecode(data, data.length),
                 "HEIC codec not available — skipping");
     }
@@ -96,7 +96,7 @@ class ImageioNativeTest {
     @Test
     void canDecodeAvif() throws IOException {
         if (!ImageioNative.isAvailable()) return;
-        byte[] data = loadResource("test4x4.avif");
+        byte[] data = loadResource("test8x8.avif");
         assumeTrue(ImageioNative.canDecode(data, data.length),
                 "AVIF codec not available — skipping");
     }
@@ -104,7 +104,7 @@ class ImageioNativeTest {
     @Test
     void canDecodeWebp() throws IOException {
         if (!ImageioNative.isAvailable()) return;
-        byte[] data = loadResource("test4x4.webp");
+        byte[] data = loadResource("test8x8.webp");
         assumeTrue(ImageioNative.canDecode(data, data.length),
                 "WebP codec not available — skipping");
     }
@@ -119,14 +119,14 @@ class ImageioNativeTest {
     // ── getSize ─────────────────────────────────────────────────────────
 
     @ParameterizedTest(name = "getSize({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp", "test4x4.png"})
-    void getSizeReturns4x4(String resource) throws IOException {
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp", "test8x8.png"})
+    void getSizeReturns8x8(String resource) throws IOException {
         if (!ImageioNative.isAvailable()) return;
         assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         Dimension size = ImageioNative.getSize(data);
-        assertEquals(4, size.width, "width");
-        assertEquals(4, size.height, "height");
+        assertEquals(8, size.width, "width");
+        assertEquals(8, size.height, "height");
     }
 
     @Test
@@ -140,7 +140,7 @@ class ImageioNativeTest {
     // ── decode ──────────────────────────────────────────────────────────
 
     @ParameterizedTest(name = "decode({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp", "test4x4.png"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp", "test8x8.png"})
     void decodeReturnsCorrectImage(String resource) throws IOException {
         if (!ImageioNative.isAvailable()) return;
         assumeCanDecode(resource);
@@ -148,13 +148,13 @@ class ImageioNativeTest {
         BufferedImage img = ImageioNative.decode(data);
 
         assertNotNull(img, "decode returned null for " + resource);
-        assertEquals(4, img.getWidth(), "width");
-        assertEquals(4, img.getHeight(), "height");
+        assertEquals(8, img.getWidth(), "width");
+        assertEquals(8, img.getHeight(), "height");
         assertTrue(img.getRGB(0, 0) != 0, "top-left pixel should not be transparent black");
     }
 
     @ParameterizedTest(name = "decode quadrant colours ({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void decodeQuadrantColours(String resource) throws IOException {
         if (!ImageioNative.isAvailable()) return;
         assumeCanDecode(resource);
@@ -163,9 +163,9 @@ class ImageioNativeTest {
 
         assertNotNull(img);
         assertColourClose("top-left (red)",     0xFFFF0000, img.getRGB(0, 0));
-        assertColourClose("top-right (green)",  0xFF00FF00, img.getRGB(3, 0));
-        assertColourClose("bottom-left (blue)", 0xFF0000FF, img.getRGB(0, 3));
-        assertColourClose("bottom-right (white)", 0xFFFFFFFF, img.getRGB(3, 3));
+        assertColourClose("top-right (green)",  0xFF00FF00, img.getRGB(7, 0));
+        assertColourClose("bottom-left (blue)", 0xFF0000FF, img.getRGB(0, 7));
+        assertColourClose("bottom-right (white)", 0xFFFFFFFF, img.getRGB(7, 7));
     }
 
     @Test
