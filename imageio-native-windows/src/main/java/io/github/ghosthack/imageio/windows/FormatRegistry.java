@@ -77,17 +77,14 @@ final class FormatRegistry {
         new Format(a("RWL","rwl"),                 a("rwl"),                     a("image/x-leica-rwl"),              false)
     );
 
-    private static final io.github.ghosthack.imageio.common.FormatRegistry INSTANCE =
-            new io.github.ghosthack.imageio.common.FormatRegistry(ALL_FORMATS) {};
+    static final io.github.ghosthack.imageio.common.FormatRegistry INSTANCE =
+            new io.github.ghosthack.imageio.common.FormatRegistry(ALL_FORMATS);
 
     // ── Delegating queries ──────────────────────────────────────────────
 
     static String[] activeFormatNames() { return INSTANCE.activeFormatNames(); }
     static String[] activeSuffixes()    { return INSTANCE.activeSuffixes(); }
     static String[] activeMimeTypes()   { return INSTANCE.activeMimeTypes(); }
-    static boolean isEnabled()          { return INSTANCE.isEnabled(); }
-    static boolean isJavaNative(String formatNameLower) { return INSTANCE.isJavaNative(formatNameLower); }
-    static boolean shouldExcludeJavaNative() { return INSTANCE.shouldExcludeJavaNative(); }
 
     private static String[] a(String... s) { return s; }
 }

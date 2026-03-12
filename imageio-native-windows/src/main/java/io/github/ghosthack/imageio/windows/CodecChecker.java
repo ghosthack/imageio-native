@@ -43,27 +43,17 @@ final class CodecChecker {
             'W', 'E', 'B', 'P'
     };
 
-    /**
-     * Returns {@code true} if the HEVC Video Extensions are installed,
-     * allowing WIC to decode HEIC/HEIF images.
-     */
-    static boolean isHeicAvailable() {
-        return WicNative.canDecode(HEIF_PROBE, HEIF_PROBE.length);
-    }
+    // Codec installation status does not change during JVM lifetime — probe once.
+    private static final boolean HEIC = WicNative.canDecode(HEIF_PROBE, HEIF_PROBE.length);
+    private static final boolean AVIF = WicNative.canDecode(AVIF_PROBE, AVIF_PROBE.length);
+    private static final boolean WEBP = WicNative.canDecode(WEBP_PROBE, WEBP_PROBE.length);
 
-    /**
-     * Returns {@code true} if the AV1 Video Extensions are installed,
-     * allowing WIC to decode AVIF images.
-     */
-    static boolean isAvifAvailable() {
-        return WicNative.canDecode(AVIF_PROBE, AVIF_PROBE.length);
-    }
+    /** Returns {@code true} if the HEVC Video Extensions are installed. */
+    static boolean isHeicAvailable() { return HEIC; }
 
-    /**
-     * Returns {@code true} if WIC can decode WebP images.
-     * Built-in on Windows 10 1809+ (October 2018 Update).
-     */
-    static boolean isWebpAvailable() {
-        return WicNative.canDecode(WEBP_PROBE, WEBP_PROBE.length);
-    }
+    /** Returns {@code true} if the AV1 Video Extensions are installed. */
+    static boolean isAvifAvailable() { return AVIF; }
+
+    /** Returns {@code true} if WIC can decode WebP images (built-in on Win10 1809+). */
+    static boolean isWebpAvailable() { return WEBP; }
 }

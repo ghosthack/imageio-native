@@ -70,21 +70,21 @@ class AppleImageioTest {
 
     @Test
     void canDecodeHeic() throws IOException {
-        byte[] data = loadResource("test4x4.heic");
+        byte[] data = loadResource("test8x8.heic");
         assertTrue(AppleImageio.canDecode(data, data.length),
                 "Should recognise HEIC data");
     }
 
     @Test
     void canDecodeAvif() throws IOException {
-        byte[] data = loadResource("test4x4.avif");
+        byte[] data = loadResource("test8x8.avif");
         assertTrue(AppleImageio.canDecode(data, data.length),
                 "Should recognise AVIF data");
     }
 
     @Test
     void canDecodeWebp() throws IOException {
-        byte[] data = loadResource("test4x4.webp");
+        byte[] data = loadResource("test8x8.webp");
         assertTrue(AppleImageio.canDecode(data, data.length),
                 "Should recognise WebP data");
     }
@@ -99,12 +99,12 @@ class AppleImageioTest {
     // ── getSize ─────────────────────────────────────────────────────────
 
     @ParameterizedTest(name = "getSize({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp", "test4x4.png"})
-    void getSizeReturns4x4(String resource) throws IOException {
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp", "test8x8.png"})
+    void getSizeReturns8x8(String resource) throws IOException {
         byte[] data = loadResource(resource);
         Dimension size = AppleImageio.getSize(data);
-        assertEquals(4, size.width, "width");
-        assertEquals(4, size.height, "height");
+        assertEquals(8, size.width, "width");
+        assertEquals(8, size.height, "height");
     }
 
     @Test
@@ -117,30 +117,30 @@ class AppleImageioTest {
     // ── decode ──────────────────────────────────────────────────────────
 
     @ParameterizedTest(name = "decode({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp", "test4x4.png"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp", "test8x8.png"})
     void decodeReturnsCorrectImage(String resource) throws IOException {
         byte[] data = loadResource(resource);
         BufferedImage img = AppleImageio.decode(data);
 
         assertNotNull(img, "decode returned null for " + resource);
-        assertEquals(4, img.getWidth(), "width");
-        assertEquals(4, img.getHeight(), "height");
+        assertEquals(8, img.getWidth(), "width");
+        assertEquals(8, img.getHeight(), "height");
         // Verify at least one pixel is non-transparent
         assertTrue(img.getRGB(0, 0) != 0, "top-left pixel should not be transparent black");
     }
 
     @ParameterizedTest(name = "decode quadrant colours ({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void decodeQuadrantColours(String resource) throws IOException {
         byte[] data = loadResource(resource);
         BufferedImage img = AppleImageio.decode(data);
 
         assertNotNull(img);
-        // 4 quadrants: red(0,0), green(3,0), blue(0,3), white(3,3)
+        // 4 quadrants: red(0,0), green(7,0), blue(0,7), white(7,7)
         assertColourClose("top-left (red)",     0xFFFF0000, img.getRGB(0, 0));
-        assertColourClose("top-right (green)",  0xFF00FF00, img.getRGB(3, 0));
-        assertColourClose("bottom-left (blue)", 0xFF0000FF, img.getRGB(0, 3));
-        assertColourClose("bottom-right (white)", 0xFFFFFFFF, img.getRGB(3, 3));
+        assertColourClose("top-right (green)",  0xFF00FF00, img.getRGB(7, 0));
+        assertColourClose("bottom-left (blue)", 0xFF0000FF, img.getRGB(0, 7));
+        assertColourClose("bottom-right (white)", 0xFFFFFFFF, img.getRGB(7, 7));
     }
 
     @Test

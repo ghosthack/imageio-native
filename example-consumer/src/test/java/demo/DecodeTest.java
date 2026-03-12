@@ -47,7 +47,7 @@ class DecodeTest {
     // ── Supplemental formats (SPI path) ─────────────────────────────────
 
     @ParameterizedTest(name = "decode {0}")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void supplementalFormatsDecoded(String resource) throws IOException {
         assumeCanDecode(resource);
         try (InputStream in = getClass().getClassLoader().getResourceAsStream(resource)) {
@@ -56,8 +56,8 @@ class DecodeTest {
             BufferedImage img = ImageIO.read(in);
 
             assertNotNull(img, "ImageIO.read() returned null for " + resource);
-            assertEquals(4, img.getWidth());
-            assertEquals(4, img.getHeight());
+            assertEquals(8, img.getWidth());
+            assertEquals(8, img.getHeight());
             assertTrue(img.getRGB(0, 0) != 0, "top-left pixel should not be transparent black");
         }
     }
@@ -66,11 +66,11 @@ class DecodeTest {
 
     @Test
     void pngAlwaysReadable() throws IOException {
-        try (InputStream in = getClass().getClassLoader().getResourceAsStream("test4x4.png")) {
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream("test8x8.png")) {
             assertNotNull(in);
             BufferedImage img = ImageIO.read(in);
             assertNotNull(img, "PNG should always be decodable");
-            assertEquals(4, img.getWidth());
+            assertEquals(8, img.getWidth());
         }
     }
 
@@ -125,7 +125,7 @@ class DecodeTest {
     // ── Direct API: canDecode ───────────────────────────────────────────
 
     @ParameterizedTest(name = "canDecode({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void directApiCanDecode(String resource) throws IOException {
         assumeCanDecode(resource);
         byte[] data = loadResource(resource);
@@ -136,27 +136,27 @@ class DecodeTest {
     // ── Direct API: getSize ─────────────────────────────────────────────
 
     @ParameterizedTest(name = "getSize({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void directApiGetSize(String resource) throws IOException {
         assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         Dimension size = ImageioNative.getSize(data);
-        assertEquals(4, size.width, "width");
-        assertEquals(4, size.height, "height");
+        assertEquals(8, size.width, "width");
+        assertEquals(8, size.height, "height");
     }
 
     // ── Direct API: decode ──────────────────────────────────────────────
 
     @ParameterizedTest(name = "decode({0})")
-    @ValueSource(strings = {"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void directApiDecode(String resource) throws IOException {
         assumeCanDecode(resource);
         byte[] data = loadResource(resource);
         BufferedImage img = ImageioNative.decode(data);
 
         assertNotNull(img, "decode returned null for " + resource);
-        assertEquals(4, img.getWidth());
-        assertEquals(4, img.getHeight());
+        assertEquals(8, img.getWidth());
+        assertEquals(8, img.getHeight());
         assertTrue(img.getRGB(0, 0) != 0, "top-left pixel should not be transparent black");
     }
 

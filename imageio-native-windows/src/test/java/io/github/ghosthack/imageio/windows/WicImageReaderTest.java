@@ -26,7 +26,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * All tests are gated by {@code @EnabledOnOs(OS.WINDOWS)} so the module
  * compiles and "passes" on macOS/Linux CI (tests are simply skipped).
  * <p>
- * Each image test loads a 4×4 test fixture with four solid-colour quadrants
+ * Each image test loads an 8×8 test fixture with four solid-colour quadrants
  * (red / green / blue / white) and verifies that the decoded
  * {@link BufferedImage} has the expected dimensions and pixel colours.
  */
@@ -55,7 +55,7 @@ class WicImageReaderTest {
     // ── ImageIO.read round-trip ─────────────────────────────────────────
 
     @ParameterizedTest(name = "ImageIO.read({0})")
-    @CsvSource({"test4x4.heic", "test4x4.avif", "test4x4.webp"})
+    @CsvSource({"test8x8.heic", "test8x8.avif", "test8x8.webp"})
     void readViaImageIO(String resource) throws IOException {
         assumeCodec(resource);
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource)) {
@@ -70,7 +70,7 @@ class WicImageReaderTest {
     // ── SPI lookup by format name ───────────────────────────────────────
 
     @ParameterizedTest(name = "getReadersByFormatName({1})")
-    @CsvSource({"test4x4.heic, heic", "test4x4.avif, avif", "test4x4.webp, webp"})
+    @CsvSource({"test8x8.heic, heic", "test8x8.avif, avif", "test8x8.webp, webp"})
     void readerLookupByFormatName(String resource, String formatName) throws IOException {
         assumeCodec(resource);
         Iterator<ImageReader> readers = ImageIO.getImageReadersByFormatName(formatName);
@@ -81,8 +81,8 @@ class WicImageReaderTest {
              ImageInputStream iis = ImageIO.createImageInputStream(is)) {
             assertNotNull(iis);
             reader.setInput(iis);
-            assertEquals(4, reader.getWidth(0));
-            assertEquals(4, reader.getHeight(0));
+            assertEquals(8, reader.getWidth(0));
+            assertEquals(8, reader.getHeight(0));
             assertEquals(1, reader.getNumImages(true));
 
             BufferedImage img = reader.read(0);
@@ -127,11 +127,11 @@ class WicImageReaderTest {
 
     @Test
     void pngReadDoesNotUseWicReader() throws IOException {
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test4x4.png")) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png")) {
             assertNotNull(is);
             BufferedImage img = ImageIO.read(is);
             assertNotNull(img, "PNG should still be readable");
-            assertEquals(4, img.getWidth());
+            assertEquals(8, img.getWidth());
         }
     }
 
@@ -158,15 +158,15 @@ class WicImageReaderTest {
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static void assertDimensions(BufferedImage img) {
-        assertEquals(4, img.getWidth(),  "width");
-        assertEquals(4, img.getHeight(), "height");
+        assertEquals(8, img.getWidth(),  "width");
+        assertEquals(8, img.getHeight(), "height");
     }
 
     private static void assertQuadrantColours(BufferedImage img) {
         assertColourClose("top-left (red)",     RED,   img.getRGB(0, 0));
-        assertColourClose("top-right (green)",  GREEN, img.getRGB(3, 0));
-        assertColourClose("bottom-left (blue)", BLUE,  img.getRGB(0, 3));
-        assertColourClose("bottom-right (white)", WHITE, img.getRGB(3, 3));
+        assertColourClose("top-right (green)",  GREEN, img.getRGB(7, 0));
+        assertColourClose("bottom-left (blue)", BLUE,  img.getRGB(0, 7));
+        assertColourClose("bottom-right (white)", WHITE, img.getRGB(7, 7));
     }
 
 }
