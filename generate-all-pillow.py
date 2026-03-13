@@ -59,3 +59,25 @@ for name, save_fn in files.items():
     print(f"  {path} ({size} bytes)")
 
 print(f"Done – {len(files)} files in {DIR}")
+
+# ── Generate EXIF orientation test fixture ──────────────────────────
+# 4×8 stored JPEG with EXIF orientation=6 (rotate 90° CW for display).
+# After orientation correction the image appears as 8×4 with quadrants:
+#   Blue(TL)  Red(TR)  /  White(BL)  Green(BR)
+
+orient_w, orient_h = 4, 8
+orient_img = Image.new("RGB", (orient_w, orient_h))
+for y in range(orient_h):
+    for x in range(orient_w):
+        if y < orient_h // 2:
+            color = (255, 0, 0) if x < orient_w // 2 else (0, 255, 0)
+        else:
+            color = (0, 0, 255) if x < orient_w // 2 else (255, 255, 255)
+        orient_img.putpixel((x, y), color)
+
+exif = orient_img.getexif()
+exif[0x0112] = 6  # EXIF Orientation tag
+orient_path = os.path.join(DIR, "test-orient6.jpg")
+orient_img.save(orient_path, format="JPEG", quality=95, exif=exif.tobytes())
+print(f"\nOrientation fixture:")
+print(f"  {orient_path} ({os.path.getsize(orient_path)} bytes)")
