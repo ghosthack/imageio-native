@@ -15,6 +15,7 @@ import java.util.Set;
 
 import static io.github.ghosthack.imageio.common.TestPixels.assertColourClose;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Tests for the {@link WindowsImageio} direct public API.
@@ -116,6 +117,8 @@ class WindowsImageioTest {
         // test-orient6.jpg: stored 4×8 with EXIF orientation=6 (90° CW)
         // Display dimensions should be 8×4 (width/height swapped)
         byte[] data = loadResource("test-orient6.jpg");
+        assumeTrue(WindowsImageio.canDecode(data, data.length),
+                "WIC cannot decode JPEG on this runner — skipping");
         Dimension size = WindowsImageio.getSize(data);
         assertEquals(8, size.width, "display width after orientation");
         assertEquals(4, size.height, "display height after orientation");
@@ -127,6 +130,8 @@ class WindowsImageioTest {
         // After 90° CW rotation, display is 8×4:
         //   Blue(TL) Red(TR) / White(BL) Green(BR)
         byte[] data = loadResource("test-orient6.jpg");
+        assumeTrue(WindowsImageio.canDecode(data, data.length),
+                "WIC cannot decode JPEG on this runner — skipping");
         BufferedImage img = WindowsImageio.decode(data);
 
         assertNotNull(img);
