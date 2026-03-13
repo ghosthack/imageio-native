@@ -143,6 +143,36 @@ class AppleImageioTest {
         assertColourClose("bottom-right (white)", 0xFFFFFFFF, img.getRGB(7, 7));
     }
 
+    // ── EXIF orientation ────────────────────────────────────────────────
+
+    @Test
+    void getSizeRespectsExifOrientation() throws IOException {
+        // test-orient6.jpg: stored 4×8 with EXIF orientation=6 (90° CW)
+        // Display dimensions should be 8×4 (width/height swapped)
+        byte[] data = loadResource("test-orient6.jpg");
+        Dimension size = AppleImageio.getSize(data);
+        assertEquals(8, size.width, "display width after orientation");
+        assertEquals(4, size.height, "display height after orientation");
+    }
+
+    @Test
+    void decodeAppliesExifOrientation() throws IOException {
+        // test-orient6.jpg: stored 4×8 (Red/Green/Blue/White quadrants)
+        // After 90° CW rotation, display is 8×4:
+        //   Blue(TL) Red(TR) / White(BL) Green(BR)
+        byte[] data = loadResource("test-orient6.jpg");
+        BufferedImage img = AppleImageio.decode(data);
+
+        assertNotNull(img);
+        assertEquals(8, img.getWidth(), "display width");
+        assertEquals(4, img.getHeight(), "display height");
+
+        assertColourClose("top-left (blue)",      0xFF0000FF, img.getRGB(0, 0));
+        assertColourClose("top-right (red)",      0xFFFF0000, img.getRGB(7, 0));
+        assertColourClose("bottom-left (white)",  0xFFFFFFFF, img.getRGB(0, 3));
+        assertColourClose("bottom-right (green)", 0xFF00FF00, img.getRGB(7, 3));
+    }
+
     @Test
     void decodeThrowsOnGarbage() {
         byte[] garbage = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};

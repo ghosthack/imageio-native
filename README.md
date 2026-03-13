@@ -16,7 +16,7 @@ Add the dependency and the JVM flag:
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.2</version>
 </dependency>
 ```
 
@@ -40,7 +40,7 @@ The `imageio-native` aggregator pulls in both platform modules and auto-selects 
 <summary>Gradle</summary>
 
 ```kotlin
-implementation("io.github.ghosthack:imageio-native:1.0.0")
+implementation("io.github.ghosthack:imageio-native:1.0.2")
 ```
 
 </details>
@@ -143,6 +143,29 @@ BufferedImage (TYPE_INT_ARGB_PRE)
 Both platforms output BGRA premultiplied pixels that map directly to `TYPE_INT_ARGB_PRE` when read as little-endian ints — zero pixel conversion overhead.
 
 One universal SPI per platform means `canDecodeInput` delegates to the native API to probe headers, so any format the OS adds in a future update works automatically. Both modules compile on all OSes; native loading is guarded by OS checks.
+
+## EXIF orientation
+
+Images from phones and cameras often carry an EXIF orientation tag (values 1-8) that describes how the sensor image should be rotated or flipped for correct display. Both backends apply this transform automatically during decode so the returned `BufferedImage` is always display-ready.
+
+| EXIF value | Transform |
+|------------|-----------|
+| 1 | None (identity) |
+| 2 | Flip horizontal |
+| 3 | Rotate 180 |
+| 4 | Flip vertical |
+| 5 | Rotate 90 + flip horizontal |
+| 6 | Rotate 90 |
+| 7 | Rotate 270 + flip horizontal |
+| 8 | Rotate 270 |
+
+**macOS (CGImageSource):** Uses `CGImageSourceCreateThumbnailAtIndex` with `kCGImageSourceCreateThumbnailWithTransform = true` and the thumbnail size set to the full image dimensions. CoreGraphics applies the EXIF transform internally during hardware-accelerated decode -- same decode path, same performance, correct orientation.
+
+**Windows (WIC):** Reads the EXIF orientation tag via `IWICMetadataQueryReader`, then inserts an `IWICBitmapFlipRotator` between the frame decoder and the format converter. The flip-rotator is a zero-copy coordinate remap -- it transforms pixel coordinates during `CopyPixels` rather than allocating a second buffer. For orientation 1 (no rotation), the flip-rotator is skipped entirely.
+
+Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped for orientations 5-8 (90/270 rotations), so width and height always reflect the display-oriented image.
+
+**Performance impact:** Negligible. Both platforms apply the transform as part of the existing decode pipeline with no extra buffer allocations or pixel copies. The macOS path creates a small options dictionary per decode call; the Windows flip-rotator is a zero-copy coordinate remap. Orientation 1 (the common case for non-phone images) skips the transform entirely.
 
 ## Project structure
 

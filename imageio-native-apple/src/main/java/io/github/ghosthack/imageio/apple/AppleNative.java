@@ -11,6 +11,11 @@ import java.lang.invoke.MethodHandle;
  * Provides the native bridge to decode images via Apple's CGImageSource API,
  * which supports HEIC, AVIF, WEBP, and many other formats through the Apple Media Engine.
  * <p>
+ * EXIF orientation is applied automatically: {@link #decode} uses
+ * {@code CGImageSourceCreateThumbnailAtIndex} with
+ * {@code kCGImageSourceCreateThumbnailWithTransform = true}, and {@link #getSize}
+ * reads the orientation property to return display-oriented dimensions.
+ * <p>
  * Requires {@code --enable-native-access=ALL-UNNAMED} at runtime.
  * Only functional on macOS; all entry points return failure gracefully on other OSes.
  */
@@ -41,6 +46,9 @@ final class AppleNative {
     /** BGRA premultiplied, little-endian — matches TYPE_INT_ARGB_PRE when read as LE ints. */
     static final int BITMAP_INFO = kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little;
 
+    /** kCFNumberIntType = 9 (C {@code int}, 32-bit signed). */
+    static final int kCFNumberIntType = 9;
+
     // ── CGRect struct layout (4 × CGFloat = 4 × double on 64-bit) ─────
 
     static final StructLayout CGRECT = MemoryLayout.structLayout(
@@ -59,44 +67,45 @@ final class AppleNative {
 
     private static final SymbolLookup LOOKUP;
 
-    // CFDataRef CFDataCreate(CFAllocatorRef allocator, const UInt8 *bytes, CFIndex length)
-    private static final MethodHandle CFDataCreate;
+    // ── CoreFoundation handles ──────────────────────────────────────────
 
-    // CFDataRef CFDataCreateWithBytesNoCopy(CFAllocatorRef allocator, const UInt8 *bytes,
-    //     CFIndex length, CFAllocatorRef bytesDeallocator)
     private static final MethodHandle CFDataCreateWithBytesNoCopy;
-
-    // kCFAllocatorNull — passed as bytesDeallocator to prevent CFData from freeing the buffer
-    private static final MemorySegment kCFAllocatorNull;
-
-    // void CFRelease(CFTypeRef cf)
     private static final MethodHandle CFRelease;
+    private static final MethodHandle CFDictionaryCreate;
+    private static final MethodHandle CFDictionaryGetValue;
+    private static final MethodHandle CFNumberCreate;
+    private static final MethodHandle CFNumberGetValue;
 
-    // CGImageSourceRef CGImageSourceCreateWithData(CFDataRef data, CFDictionaryRef options)
+    // ── CoreFoundation constant symbols ─────────────────────────────────
+
+    private static final MemorySegment kCFAllocatorNull;
+    private static final MemorySegment kCFBooleanTrue;
+    private static final MemorySegment kCFTypeDictionaryKeyCallBacks;   // struct, not pointer-to-pointer
+    private static final MemorySegment kCFTypeDictionaryValueCallBacks; // struct, not pointer-to-pointer
+
+    // ── ImageIO handles ─────────────────────────────────────────────────
+
     private static final MethodHandle CGImageSourceCreateWithData;
-
-    // CGImageRef CGImageSourceCreateImageAtIndex(CGImageSourceRef src, size_t index, CFDictionaryRef options)
-    private static final MethodHandle CGImageSourceCreateImageAtIndex;
-
-    // size_t CGImageGetWidth(CGImageRef image)
-    private static final MethodHandle CGImageGetWidth;
-
-    // size_t CGImageGetHeight(CGImageRef image)
-    private static final MethodHandle CGImageGetHeight;
-
-    // CGColorSpaceRef CGColorSpaceCreateDeviceRGB(void)
-    private static final MethodHandle CGColorSpaceCreateDeviceRGB;
-
-    // CGContextRef CGBitmapContextCreate(void *data, size_t w, size_t h,
-    //     size_t bitsPerComponent, size_t bytesPerRow, CGColorSpaceRef space, uint32_t bitmapInfo)
-    private static final MethodHandle CGBitmapContextCreate;
-
-    // void CGContextDrawImage(CGContextRef c, CGRect rect, CGImageRef image)
-    private static final MethodHandle CGContextDrawImage;
-
-    // CGImageSourceStatus CGImageSourceGetStatus(CGImageSourceRef src)
-    // Returns: 0 = complete, -1 = incomplete (format identified), -3 = unknown type
     private static final MethodHandle CGImageSourceGetStatus;
+    private static final MethodHandle CGImageSourceCopyPropertiesAtIndex;
+    private static final MethodHandle CGImageSourceCreateThumbnailAtIndex;
+
+    // ── ImageIO property key symbols (CFStringRef constants) ────────────
+
+    private static final MemorySegment kCGImagePropertyPixelWidth;
+    private static final MemorySegment kCGImagePropertyPixelHeight;
+    private static final MemorySegment kCGImagePropertyOrientation;
+    private static final MemorySegment kCGImageSourceCreateThumbnailFromImageAlways;
+    private static final MemorySegment kCGImageSourceCreateThumbnailWithTransform;
+    private static final MemorySegment kCGImageSourceThumbnailMaxPixelSize;
+
+    // ── CoreGraphics handles ────────────────────────────────────────────
+
+    private static final MethodHandle CGImageGetWidth;
+    private static final MethodHandle CGImageGetHeight;
+    private static final MethodHandle CGColorSpaceCreateDeviceRGB;
+    private static final MethodHandle CGBitmapContextCreate;
+    private static final MethodHandle CGContextDrawImage;
 
     static {
         if (IS_MACOS) {
@@ -105,22 +114,51 @@ final class AppleNative {
             System.load("/System/Library/Frameworks/ImageIO.framework/ImageIO");
             LOOKUP = SymbolLookup.loaderLookup();
 
-            CFDataCreate = downcall("CFDataCreate",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+            // ── CoreFoundation ──────────────────────────────────────────
             CFDataCreateWithBytesNoCopy = downcall("CFDataCreateWithBytesNoCopy",
                     FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
                             ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
-            MemorySegment cfAllocatorNullSym = LOOKUP.find("kCFAllocatorNull")
-                    .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: kCFAllocatorNull"));
-            kCFAllocatorNull = cfAllocatorNullSym
-                    .reinterpret(ValueLayout.ADDRESS.byteSize())
-                    .get(ValueLayout.ADDRESS, 0);
             CFRelease = downcall("CFRelease",
                     FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+            CFDictionaryCreate = downcall("CFDictionaryCreate",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+            CFDictionaryGetValue = downcall("CFDictionaryGetValue",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+            CFNumberCreate = downcall("CFNumberCreate",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+            CFNumberGetValue = downcall("CFNumberGetValue",
+                    FunctionDescriptor.of(ValueLayout.JAVA_BOOLEAN, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+
+            kCFAllocatorNull          = loadConstPtr("kCFAllocatorNull");
+            kCFBooleanTrue            = loadConstPtr("kCFBooleanTrue");
+            // These are struct values (not pointer-to-pointer) — use the symbol address directly
+            kCFTypeDictionaryKeyCallBacks   = loadSymbolAddr("kCFTypeDictionaryKeyCallBacks");
+            kCFTypeDictionaryValueCallBacks = loadSymbolAddr("kCFTypeDictionaryValueCallBacks");
+
+            // ── ImageIO ─────────────────────────────────────────────────
             CGImageSourceCreateWithData = downcall("CGImageSourceCreateWithData",
                     FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-            CGImageSourceCreateImageAtIndex = downcall("CGImageSourceCreateImageAtIndex",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+            CGImageSourceGetStatus = downcall("CGImageSourceGetStatus",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+            CGImageSourceCopyPropertiesAtIndex = downcall("CGImageSourceCopyPropertiesAtIndex",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+            CGImageSourceCreateThumbnailAtIndex = downcall("CGImageSourceCreateThumbnailAtIndex",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+
+            kCGImagePropertyPixelWidth  = loadConstPtr("kCGImagePropertyPixelWidth");
+            kCGImagePropertyPixelHeight = loadConstPtr("kCGImagePropertyPixelHeight");
+            kCGImagePropertyOrientation = loadConstPtr("kCGImagePropertyOrientation");
+            kCGImageSourceCreateThumbnailFromImageAlways = loadConstPtr("kCGImageSourceCreateThumbnailFromImageAlways");
+            kCGImageSourceCreateThumbnailWithTransform   = loadConstPtr("kCGImageSourceCreateThumbnailWithTransform");
+            kCGImageSourceThumbnailMaxPixelSize          = loadConstPtr("kCGImageSourceThumbnailMaxPixelSize");
+
+            // ── CoreGraphics ────────────────────────────────────────────
             CGImageGetWidth = downcall("CGImageGetWidth",
                     FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
             CGImageGetHeight = downcall("CGImageGetHeight",
@@ -134,34 +172,58 @@ final class AppleNative {
                             ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
             CGContextDrawImage = downcall("CGContextDrawImage",
                     FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, CGRECT, ValueLayout.ADDRESS));
-            CGImageSourceGetStatus = downcall("CGImageSourceGetStatus",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
         } else {
             LOOKUP = null;
-            CFDataCreate = null;
             CFDataCreateWithBytesNoCopy = null;
-            kCFAllocatorNull = null;
             CFRelease = null;
+            CFDictionaryCreate = null;
+            CFDictionaryGetValue = null;
+            CFNumberCreate = null;
+            CFNumberGetValue = null;
+            kCFAllocatorNull = null;
+            kCFBooleanTrue = null;
+            kCFTypeDictionaryKeyCallBacks = null;
+            kCFTypeDictionaryValueCallBacks = null;
             CGImageSourceCreateWithData = null;
-            CGImageSourceCreateImageAtIndex = null;
+            CGImageSourceGetStatus = null;
+            CGImageSourceCopyPropertiesAtIndex = null;
+            CGImageSourceCreateThumbnailAtIndex = null;
+            kCGImagePropertyPixelWidth = null;
+            kCGImagePropertyPixelHeight = null;
+            kCGImagePropertyOrientation = null;
+            kCGImageSourceCreateThumbnailFromImageAlways = null;
+            kCGImageSourceCreateThumbnailWithTransform = null;
+            kCGImageSourceThumbnailMaxPixelSize = null;
             CGImageGetWidth = null;
             CGImageGetHeight = null;
             CGColorSpaceCreateDeviceRGB = null;
             CGBitmapContextCreate = null;
             CGContextDrawImage = null;
-            CGImageSourceGetStatus = null;
         }
     }
 
     static final int kCGImageStatusUnknownType = -3;
     static final int kCGImageStatusIncomplete  = -1;
 
-    // ── Helper: create downcall handle ──────────────────────────────────
+    // ── Helpers: symbol loading ─────────────────────────────────────────
 
     private static MethodHandle downcall(String name, FunctionDescriptor fd) {
         MemorySegment addr = LOOKUP.find(name)
                 .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: " + name));
         return LINKER.downcallHandle(addr, fd);
+    }
+
+    /** Dereferences a global constant pointer (e.g. {@code extern const CFStringRef kFoo}). */
+    private static MemorySegment loadConstPtr(String name) {
+        MemorySegment sym = LOOKUP.find(name)
+                .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: " + name));
+        return sym.reinterpret(ValueLayout.ADDRESS.byteSize()).get(ValueLayout.ADDRESS, 0);
+    }
+
+    /** Returns the raw symbol address (for struct-valued globals like callback structs). */
+    private static MemorySegment loadSymbolAddr(String name) {
+        return LOOKUP.find(name)
+                .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: " + name));
     }
 
     // ── Helper: release a non-NULL native reference ─────────────────────
@@ -171,6 +233,66 @@ final class AppleNative {
             try {
                 CFRelease.invokeExact(ref);
             } catch (Throwable ignored) { /* invokeExact signature; native release cannot throw */ }
+        }
+    }
+
+    // ── Helper: read an int property from a CFDictionary ────────────────
+
+    /**
+     * Reads an integer value from a CFDictionary by key.
+     * Returns {@code defaultValue} if the key is absent or not a CFNumber.
+     */
+    private static int dictGetInt(MemorySegment dict, MemorySegment key, int defaultValue) {
+        try {
+            MemorySegment val = (MemorySegment) CFDictionaryGetValue.invokeExact(dict, key);
+            if (MemorySegment.NULL.equals(val)) return defaultValue;
+            // val is a CFNumber — extract as kCFNumberIntType (9)
+            try (Arena a = Arena.ofConfined()) {
+                MemorySegment buf = a.allocate(ValueLayout.JAVA_INT);
+                boolean ok = (boolean) CFNumberGetValue.invokeExact(val, kCFNumberIntType, buf);
+                return ok ? buf.get(ValueLayout.JAVA_INT, 0) : defaultValue;
+            }
+        } catch (Throwable t) {
+            return defaultValue;
+        }
+    }
+
+    // ── Helper: create CFDictionary for thumbnail options ────────────────
+
+    /**
+     * Creates a CFDictionary with thumbnail options:
+     * <ul>
+     *   <li>{@code kCGImageSourceCreateThumbnailFromImageAlways = true}</li>
+     *   <li>{@code kCGImageSourceCreateThumbnailWithTransform = true}</li>
+     *   <li>{@code kCGImageSourceThumbnailMaxPixelSize = maxDim}</li>
+     * </ul>
+     * Caller must release the returned dictionary.
+     */
+    private static MemorySegment createThumbnailOptions(Arena arena, int maxDim) throws Throwable {
+        // Create CFNumber for max pixel size
+        MemorySegment sizePtr = arena.allocate(ValueLayout.JAVA_INT);
+        sizePtr.set(ValueLayout.JAVA_INT, 0, maxDim);
+        MemorySegment cfMaxSize = (MemorySegment) CFNumberCreate.invokeExact(
+                MemorySegment.NULL, kCFNumberIntType, sizePtr);
+
+        try {
+            // Build key and value arrays (3 entries)
+            MemorySegment keys = arena.allocate(ValueLayout.ADDRESS, 3);
+            MemorySegment values = arena.allocate(ValueLayout.ADDRESS, 3);
+
+            keys.setAtIndex(ValueLayout.ADDRESS, 0, kCGImageSourceCreateThumbnailFromImageAlways);
+            keys.setAtIndex(ValueLayout.ADDRESS, 1, kCGImageSourceCreateThumbnailWithTransform);
+            keys.setAtIndex(ValueLayout.ADDRESS, 2, kCGImageSourceThumbnailMaxPixelSize);
+
+            values.setAtIndex(ValueLayout.ADDRESS, 0, kCFBooleanTrue);
+            values.setAtIndex(ValueLayout.ADDRESS, 1, kCFBooleanTrue);
+            values.setAtIndex(ValueLayout.ADDRESS, 2, cfMaxSize);
+
+            return (MemorySegment) CFDictionaryCreate.invokeExact(
+                    MemorySegment.NULL, keys, values, 3L,
+                    kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks);
+        } finally {
+            release(cfMaxSize);
         }
     }
 
@@ -216,13 +338,15 @@ final class AppleNative {
     // ── Lightweight size query ─────────────────────────────────────────
 
     /**
-     * Returns image dimensions without full pixel decode.
+     * Returns display-oriented image dimensions without full pixel decode.
      * <p>
-     * Creates a CGImage to read width/height metadata but does not allocate
-     * a bitmap context or copy pixels — significantly lighter than {@link #decode}.
+     * Reads pixel width, height, and EXIF orientation from
+     * {@code CGImageSourceCopyPropertiesAtIndex} — no CGImage is created and
+     * no pixels are decoded.  For orientations 5–8 (90°/270° rotations),
+     * width and height are swapped to reflect the display orientation.
      *
      * @param imageData the raw image file bytes
-     * @return dimensions as {@code [width, height]}
+     * @return display dimensions as {@code [width, height]}
      * @throws javax.imageio.IIOException if the native size query fails or OS is not macOS
      */
     static int[] getSize(byte[] imageData) throws java.io.IOException {
@@ -232,7 +356,7 @@ final class AppleNative {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment cfData = MemorySegment.NULL;
             MemorySegment imgSrc = MemorySegment.NULL;
-            MemorySegment cgImage = MemorySegment.NULL;
+            MemorySegment props = MemorySegment.NULL;
             try {
                 MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
                 cfData = (MemorySegment) CFDataCreateWithBytesNoCopy.invokeExact(
@@ -245,23 +369,29 @@ final class AppleNative {
                 if (MemorySegment.NULL.equals(imgSrc))
                     throw new javax.imageio.IIOException("Unsupported image format");
 
-                cgImage = (MemorySegment) CGImageSourceCreateImageAtIndex.invokeExact(
+                // Read properties (metadata only — no pixel decode)
+                props = (MemorySegment) CGImageSourceCopyPropertiesAtIndex.invokeExact(
                         imgSrc, 0L, MemorySegment.NULL);
-                if (MemorySegment.NULL.equals(cgImage))
-                    throw new javax.imageio.IIOException("Failed to read image metadata");
+                if (MemorySegment.NULL.equals(props))
+                    throw new javax.imageio.IIOException("Failed to read image properties");
 
-                int w = (int) (long) CGImageGetWidth.invokeExact(cgImage);
-                int h = (int) (long) CGImageGetHeight.invokeExact(cgImage);
-                if (w <= 0 || h <= 0)
-                    throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
+                int rawW = dictGetInt(props, kCGImagePropertyPixelWidth, -1);
+                int rawH = dictGetInt(props, kCGImagePropertyPixelHeight, -1);
+                if (rawW <= 0 || rawH <= 0)
+                    throw new javax.imageio.IIOException("Invalid image dimensions: " + rawW + "x" + rawH);
 
-                return new int[]{w, h};
+                // EXIF orientations 5–8 involve a 90° or 270° rotation → swap width/height
+                int orientation = dictGetInt(props, kCGImagePropertyOrientation, 1);
+                if (orientation >= 5 && orientation <= 8) {
+                    return new int[]{rawH, rawW};
+                }
+                return new int[]{rawW, rawH};
             } catch (java.io.IOException e) {
                 throw e;
             } catch (Throwable t) {
                 throw new javax.imageio.IIOException("Native image size query failed", t);
             } finally {
-                release(cgImage);
+                release(props);
                 release(imgSrc);
                 release(cfData);
             }
@@ -273,9 +403,14 @@ final class AppleNative {
     /**
      * Decodes raw image bytes (HEIC, AVIF, WEBP, etc.) through Apple's CGImageSource
      * and returns a {@link BufferedImage} of type {@code TYPE_INT_ARGB_PRE}.
+     * <p>
+     * EXIF orientation is applied automatically via
+     * {@code CGImageSourceCreateThumbnailAtIndex} with
+     * {@code kCGImageSourceCreateThumbnailWithTransform = true}.  The returned
+     * image always has display-oriented dimensions.
      *
      * @param imageData the raw image file bytes
-     * @return decoded image
+     * @return decoded image with orientation applied
      * @throws javax.imageio.IIOException if the native decode fails or OS is not macOS
      */
     static BufferedImage decode(byte[] imageData) throws java.io.IOException {
@@ -285,6 +420,8 @@ final class AppleNative {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment cfData = MemorySegment.NULL;
             MemorySegment imgSrc = MemorySegment.NULL;
+            MemorySegment props = MemorySegment.NULL;
+            MemorySegment thumbOpts = MemorySegment.NULL;
             MemorySegment cgImage = MemorySegment.NULL;
             MemorySegment colorSpace = MemorySegment.NULL;
             MemorySegment ctx = MemorySegment.NULL;
@@ -305,27 +442,47 @@ final class AppleNative {
                 if (MemorySegment.NULL.equals(imgSrc))
                     throw new javax.imageio.IIOException("CGImageSourceCreateWithData returned NULL – unsupported format");
 
-                // 3. Decode image at index 0
-                cgImage = (MemorySegment) CGImageSourceCreateImageAtIndex.invokeExact(
+                // 3. Read raw dimensions from properties for MAX_PIXELS check
+                props = (MemorySegment) CGImageSourceCopyPropertiesAtIndex.invokeExact(
                         imgSrc, 0L, MemorySegment.NULL);
-                if (MemorySegment.NULL.equals(cgImage))
-                    throw new javax.imageio.IIOException("CGImageSourceCreateImageAtIndex returned NULL – decode failed");
+                if (MemorySegment.NULL.equals(props))
+                    throw new javax.imageio.IIOException("Failed to read image properties");
 
-                // 4. Dimensions
+                int rawW = dictGetInt(props, kCGImagePropertyPixelWidth, -1);
+                int rawH = dictGetInt(props, kCGImagePropertyPixelHeight, -1);
+                if (rawW <= 0 || rawH <= 0)
+                    throw new javax.imageio.IIOException("Invalid image dimensions: " + rawW + "x" + rawH);
+
+                long totalPixels = (long) rawW * rawH;
+                if (totalPixels > MAX_PIXELS)
+                    throw new javax.imageio.IIOException(
+                            "Image too large: " + rawW + "x" + rawH + " (" + totalPixels
+                                    + " pixels exceeds limit of " + MAX_PIXELS + ")");
+
+                // 4. Create thumbnail with orientation transform applied
+                //    kCGImageSourceCreateThumbnailFromImageAlways = true: always create from full image
+                //    kCGImageSourceCreateThumbnailWithTransform = true: apply EXIF orientation
+                //    kCGImageSourceThumbnailMaxPixelSize = max(rawW, rawH): full resolution
+                int maxDim = Math.max(rawW, rawH);
+                thumbOpts = createThumbnailOptions(arena, maxDim);
+                if (MemorySegment.NULL.equals(thumbOpts))
+                    throw new javax.imageio.IIOException("Failed to create thumbnail options");
+
+                cgImage = (MemorySegment) CGImageSourceCreateThumbnailAtIndex.invokeExact(
+                        imgSrc, 0L, thumbOpts);
+                if (MemorySegment.NULL.equals(cgImage))
+                    throw new javax.imageio.IIOException("CGImageSourceCreateThumbnailAtIndex returned NULL – decode failed");
+
+                // 5. Display dimensions (orientation already applied by the thumbnail API)
                 long w = (long) CGImageGetWidth.invokeExact(cgImage);
                 long h = (long) CGImageGetHeight.invokeExact(cgImage);
                 if (w <= 0 || h <= 0)
-                    throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
-                long totalPixels = w * h;
-                if (totalPixels > MAX_PIXELS)
-                    throw new javax.imageio.IIOException(
-                            "Image too large: " + w + "x" + h + " (" + totalPixels
-                                    + " pixels exceeds limit of " + MAX_PIXELS + ")");
+                    throw new javax.imageio.IIOException("Invalid decoded dimensions: " + w + "x" + h);
 
-                // 5. Device-RGB colour space
+                // 6. Device-RGB colour space
                 colorSpace = (MemorySegment) CGColorSpaceCreateDeviceRGB.invokeExact();
 
-                // 6. Allocate pixel buffer and create bitmap context
+                // 7. Allocate pixel buffer and create bitmap context
                 long bytesPerRow = w * 4;
                 MemorySegment pixelData = arena.allocate(bytesPerRow * h, 16);
                 ctx = (MemorySegment) CGBitmapContextCreate.invokeExact(
@@ -333,7 +490,7 @@ final class AppleNative {
                 if (MemorySegment.NULL.equals(ctx))
                     throw new javax.imageio.IIOException("CGBitmapContextCreate returned NULL");
 
-                // 7. Draw the decoded image into the bitmap context
+                // 8. Draw the orientation-corrected image into the bitmap context
                 MemorySegment rect = arena.allocate(CGRECT);
                 rect.set(ValueLayout.JAVA_DOUBLE, 0, 0.0);            // origin.x
                 rect.set(ValueLayout.JAVA_DOUBLE, 8, 0.0);            // origin.y
@@ -341,7 +498,7 @@ final class AppleNative {
                 rect.set(ValueLayout.JAVA_DOUBLE, 24, (double) h);    // size.height
                 CGContextDrawImage.invokeExact(ctx, rect, cgImage);
 
-                // 8. Copy pixels into a BufferedImage (TYPE_INT_ARGB_PRE)
+                // 9. Copy pixels into a BufferedImage (TYPE_INT_ARGB_PRE)
                 //    Memory layout: BGRA (little-endian) → LE int reads as 0xAARRGGBB → matches ARGB_PRE.
                 int iw = (int) w;
                 int ih = (int) h;
@@ -358,6 +515,8 @@ final class AppleNative {
                 release(ctx);
                 release(colorSpace);
                 release(cgImage);
+                release(thumbOpts);
+                release(props);
                 release(imgSrc);
                 release(cfData);
             }

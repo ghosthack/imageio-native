@@ -30,13 +30,13 @@
         <dependency>
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native</artifactId>
-            <version>1.0.1</version>
+            <version>1.0.2</version>
         </dependency>
         <!-- Shared test fixtures (test8x8.heic, .avif, .webp, .png) -->
         <dependency>
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native-common</artifactId>
-            <version>1.0.1</version>
+            <version>1.0.2</version>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>

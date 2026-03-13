@@ -101,7 +101,21 @@ final class WicNative {
     /** WICBitmapPaletteTypeCustom = 0 */
     private static final int WICBitmapPaletteTypeCustom = 0;
 
+    // ── PROPVARIANT / WICBitmapTransformOptions ─────────────────────────
 
+    /** PROPVARIANT total size on 64-bit: vt(2) + reserved(6) + union(16) = 24 bytes */
+    private static final int PROPVARIANT_SIZE = 24;
+
+    /** VARTYPE VT_UI2 (unsigned 16-bit integer) */
+    private static final short VT_UI2 = 18;
+
+    /** WICBitmapTransformOptions enum values */
+    private static final int WICBitmapTransformRotate0          = 0x0;
+    private static final int WICBitmapTransformRotate90         = 0x1;
+    private static final int WICBitmapTransformRotate180        = 0x2;
+    private static final int WICBitmapTransformRotate270        = 0x3;
+    private static final int WICBitmapTransformFlipHorizontal   = 0x8;
+    private static final int WICBitmapTransformFlipVertical     = 0x10;
 
     // ── DLL loading and ole32 downcalls ─────────────────────────────────
 
@@ -226,6 +240,29 @@ final class WicNative {
                     ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_DOUBLE,
                     ValueLayout.JAVA_INT));
 
+    // IWICBitmapFrameDecode::GetMetadataQueryReader (vtable[8])
+    //   HRESULT GetMetadataQueryReader([in] this, [out] IWICMetadataQueryReader **ppReader)
+    private static final MethodHandle Frame_GetMetadataQueryReader = LINKER.downcallHandle(
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+
+    // IWICMetadataQueryReader::GetMetadataByName (vtable[5])
+    //   HRESULT GetMetadataByName([in] this, [in] LPCWSTR wzName, [in,out] PROPVARIANT *pvarValue)
+    private static final MethodHandle MetadataReader_GetMetadataByName = LINKER.downcallHandle(
+            FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                    ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+
+    // IWICImagingFactory::CreateBitmapFlipRotator (vtable[13])
+    //   HRESULT CreateBitmapFlipRotator([in] this, [out] IWICBitmapFlipRotator **ppRotator)
+    private static final MethodHandle Factory_CreateBitmapFlipRotator = LINKER.downcallHandle(
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+
+    // IWICBitmapFlipRotator::Initialize (vtable[8])
+    //   HRESULT Initialize([in] this, [in] IWICBitmapSource *pISource,
+    //       [in] WICBitmapTransformOptions options)
+    private static final MethodHandle FlipRotator_Initialize = LINKER.downcallHandle(
+            FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                    ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+
     // ── Vtable helpers ──────────────────────────────────────────────────
 
     /**
@@ -252,6 +289,91 @@ final class WicNative {
                 IUnknown_Release.invokeExact(vtable(comObj, 2), comObj);
             } catch (Throwable ignored) { /* invokeExact signature; native release cannot throw */ }
         }
+    }
+
+    // ── EXIF orientation helpers ───────────────────────────────────────────
+
+    /**
+     * Allocates a null-terminated UTF-16LE wide string (LPCWSTR) in the arena.
+     */
+    private static MemorySegment wstr(Arena arena, String s) {
+        byte[] utf16 = s.getBytes(java.nio.charset.StandardCharsets.UTF_16LE);
+        MemorySegment seg = arena.allocate(utf16.length + 2L); // +2 for null terminator
+        MemorySegment.copy(utf16, 0, seg, ValueLayout.JAVA_BYTE, 0, utf16.length);
+        seg.set(ValueLayout.JAVA_SHORT, utf16.length, (short) 0); // null terminator
+        return seg;
+    }
+
+    /**
+     * Reads the EXIF orientation tag from a WIC frame's metadata.
+     * <p>
+     * Tries JPEG path first ({@code /app1/ifd/\{ushort=274\}}), then
+     * TIFF/HEIC/AVIF path ({@code /ifd/\{ushort=274\}}).
+     *
+     * @param arena arena for temporary allocations
+     * @param frame the IWICBitmapFrameDecode COM object
+     * @return EXIF orientation value (1-8), or 1 if not found / error
+     */
+    private static int readExifOrientation(Arena arena, MemorySegment frame) {
+        MemorySegment reader = MemorySegment.NULL;
+        try {
+            // Get metadata query reader from frame (vtable[8] on IWICBitmapFrameDecode)
+            MemorySegment ppReader = arena.allocate(ValueLayout.ADDRESS);
+            int hr = (int) Frame_GetMetadataQueryReader.invokeExact(
+                    vtable(frame, 8), frame, ppReader);
+            if (failed(hr)) return 1;
+            reader = ppReader.get(ValueLayout.ADDRESS, 0);
+
+            // Try JPEG metadata path first, then TIFF/HEIC/AVIF path.
+            // Note: PropVariantClear is intentionally not called on the PROPVARIANT.
+            // The orientation tag is always VT_UI2 (inline 16-bit value, no heap
+            // allocation), so there is nothing to free.  Adding a PropVariantClear
+            // downcall for the theoretical case of an unexpected VARTYPE is not
+            // worth the extra ole32 binding.
+            String[] paths = {"/app1/ifd/{ushort=274}", "/ifd/{ushort=274}"};
+            for (String path : paths) {
+                MemorySegment propvariant = arena.allocate(PROPVARIANT_SIZE);
+                propvariant.fill((byte) 0); // zero-initialize
+                MemorySegment wsPath = wstr(arena, path);
+
+                hr = (int) MetadataReader_GetMetadataByName.invokeExact(
+                        vtable(reader, 5), reader, wsPath, propvariant);
+                if (failed(hr)) continue;
+
+                // Check VARTYPE at offset 0 — we expect VT_UI2
+                short vt = propvariant.get(ValueLayout.JAVA_SHORT, 0);
+                if (vt == VT_UI2) {
+                    int orientation = Short.toUnsignedInt(propvariant.get(ValueLayout.JAVA_SHORT, 8));
+                    if (orientation >= 1 && orientation <= 8) {
+                        return orientation;
+                    }
+                }
+            }
+            return 1; // default: no rotation
+        } catch (Throwable t) {
+            return 1;
+        } finally {
+            release(reader);
+        }
+    }
+
+    /**
+     * Maps EXIF orientation (1-8) to WICBitmapTransformOptions flags.
+     *
+     * @param orientation EXIF orientation value
+     * @return WICBitmapTransformOptions bitmask
+     */
+    private static int exifToWicTransform(int orientation) {
+        return switch (orientation) {
+            case 2 -> WICBitmapTransformFlipHorizontal;
+            case 3 -> WICBitmapTransformRotate180;
+            case 4 -> WICBitmapTransformFlipVertical;
+            case 5 -> WICBitmapTransformRotate90 | WICBitmapTransformFlipHorizontal;
+            case 6 -> WICBitmapTransformRotate90;
+            case 7 -> WICBitmapTransformRotate270 | WICBitmapTransformFlipHorizontal;
+            case 8 -> WICBitmapTransformRotate270;
+            default -> WICBitmapTransformRotate0; // orientation 1 or unknown
+        };
     }
 
     // ── Cached WIC factory ────────────────────────────────────────────────
@@ -411,6 +533,11 @@ final class WicNative {
                 if (w <= 0 || h <= 0)
                     throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
 
+                // EXIF orientations 5-8 swap width/height (90°/270° rotations)
+                int orientation = readExifOrientation(arena, frame);
+                if (orientation >= 5 && orientation <= 8) {
+                    return new int[]{h, w};
+                }
                 return new int[]{w, h};
             } finally {
                 release(frame);
@@ -440,6 +567,7 @@ final class WicNative {
      *   <li>Create IWICStream, initialise from memory</li>
      *   <li>CreateDecoderFromStream</li>
      *   <li>GetFrame(0) → IWICBitmapFrameDecode</li>
+     *   <li>Read EXIF orientation; if != 1, create IWICBitmapFlipRotator</li>
      *   <li>CreateFormatConverter → Initialize to 32bppPBGRA</li>
      *   <li>GetSize + CopyPixels into Java array</li>
      *   <li>Wrap in BufferedImage(TYPE_INT_ARGB_PRE)</li>
@@ -459,6 +587,7 @@ final class WicNative {
         MemorySegment stream = MemorySegment.NULL;
         MemorySegment decoder = MemorySegment.NULL;
         MemorySegment frame = MemorySegment.NULL;
+        MemorySegment flipRotator = MemorySegment.NULL;
         MemorySegment converter = MemorySegment.NULL;
 
         try (Arena arena = Arena.ofConfined()) {
@@ -500,6 +629,30 @@ final class WicNative {
                         "IWICBitmapDecoder::GetFrame(0) failed");
                 frame = ppFrame.get(ValueLayout.ADDRESS, 0);
 
+                // 5b. Read EXIF orientation and optionally create flip-rotator
+                //     Pipeline: frame → [flipRotator] → converter → CopyPixels
+                int orientation = readExifOrientation(arena, frame);
+                MemorySegment converterSource = frame; // default: feed frame directly to converter
+
+                if (orientation != 1) {
+                    int transform = exifToWicTransform(orientation);
+                    // Defensive: readExifOrientation constrains to 1-8, so
+                    // exifToWicTransform(2-8) never returns Rotate0.  The
+                    // guard stays as a safety net against future changes.
+                    if (transform != WICBitmapTransformRotate0) {
+                        MemorySegment ppFlipRotator = arena.allocate(ValueLayout.ADDRESS);
+                        check((int) Factory_CreateBitmapFlipRotator.invokeExact(
+                                vtable(factory, 13), factory, ppFlipRotator),
+                                "IWICImagingFactory::CreateBitmapFlipRotator failed");
+                        flipRotator = ppFlipRotator.get(ValueLayout.ADDRESS, 0);
+
+                        check((int) FlipRotator_Initialize.invokeExact(
+                                vtable(flipRotator, 8), flipRotator, frame, transform),
+                                "IWICBitmapFlipRotator::Initialize failed");
+                        converterSource = flipRotator;
+                    }
+                }
+
                 // 6. Create format converter and initialise to 32bppPBGRA
                 MemorySegment ppConverter = arena.allocate(ValueLayout.ADDRESS);
                 check((int) Factory_CreateFormatConverter.invokeExact(
@@ -508,7 +661,7 @@ final class WicNative {
                 converter = ppConverter.get(ValueLayout.ADDRESS, 0);
 
                 check((int) Converter_Initialize.invokeExact(
-                        vtable(converter, 8), converter, frame,
+                        vtable(converter, 8), converter, converterSource,
                         GUID_PIXEL_FORMAT_PBGRA,
                         WICBitmapDitherTypeNone,
                         MemorySegment.NULL, // no palette
@@ -516,7 +669,7 @@ final class WicNative {
                         WICBitmapPaletteTypeCustom),
                         "IWICFormatConverter::Initialize failed");
 
-                // 7. Get dimensions
+                // 7. Get dimensions (post-rotation)
                 MemorySegment pWidth = arena.allocate(ValueLayout.JAVA_INT);
                 MemorySegment pHeight = arena.allocate(ValueLayout.JAVA_INT);
                 check((int) Source_GetSize.invokeExact(
@@ -551,6 +704,7 @@ final class WicNative {
                 return result;
             } finally {
                 release(converter);
+                release(flipRotator);
                 release(frame);
                 release(decoder);
                 release(stream);
