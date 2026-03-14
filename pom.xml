@@ -51,6 +51,10 @@
         <module>imageio-native-apple</module>
         <module>imageio-native-windows</module>
         <module>imageio-native</module>
+        <module>imageio-native-video-common</module>
+        <module>imageio-native-video-apple</module>
+        <module>imageio-native-video-windows</module>
+        <module>imageio-native-video</module>
     </modules>
 
     <properties>
