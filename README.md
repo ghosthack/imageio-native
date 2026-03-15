@@ -140,6 +140,31 @@ The vips backend adds cross-platform support (macOS, Linux, Windows) for HEIC, A
 
 The SPI declares a fixed set of common formats. Formats not in the list but supported by the installed libvips can still be decoded via the direct `VipsNative` API -- they just won't be auto-discovered by `ImageIO.read()`.
 
+### ImageMagick
+
+The `imageio-native-magick` module is an optional backend that delegates to [ImageMagick 7](https://imagemagick.org/) (MagickWand C API). Supports 200+ formats including EPS, PSD, XCF, DPX, TGA, PCX, XBM/XPM, and more.
+
+```xml
+<dependency>
+    <groupId>io.github.ghosthack</groupId>
+    <artifactId>imageio-native-magick</artifactId>
+    <version>1.0.2</version>
+</dependency>
+```
+
+Requires ImageMagick 7 installed on the system. Both Q16 and Q16HDRI builds are supported.
+
+```sh
+# macOS (MacPorts)
+sudo port install ImageMagick7
+
+# macOS (Homebrew)
+brew install imagemagick
+
+# Debian/Ubuntu
+sudo apt install libmagickwand-7-dev
+```
+
 ### Backend priority
 
 When multiple backends are on the classpath (e.g. platform-native + vips), the consumer controls which backend handles each format via system properties:
@@ -266,6 +291,7 @@ Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped fo
 ├── imageio-native-video-windows/    Windows video module (Media Foundation)
 ├── imageio-native-video/            cross-platform video aggregator
 ├── imageio-native-vips/             optional libvips backend
+├── imageio-native-magick/           optional ImageMagick 7 backend
 ├── scripts/                         test fixture generators
 └── example-consumer/                standalone demo (not in reactor)
 ```
