@@ -56,6 +56,7 @@
         <module>imageio-native-video-windows</module>
         <module>imageio-native-video</module>
         <module>imageio-native-vips</module>
+        <module>imageio-native-magick</module>
     </modules>
 
     <properties>

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.github.ghosthack</groupId>
+        <artifactId>imageio-native-parent</artifactId>
+        <version>1.0.2</version>
+    </parent>
+
+    <artifactId>imageio-native-magick</artifactId>
+    <packaging>jar</packaging>
+
+    <name>imageio-native-magick</name>
+    <description>
+        Optional ImageIO reader backed by ImageMagick 7 (MagickWand API) via
+        Project Panama. Adds cross-platform support for 200+ image formats
+        including EPS, PSD, XCF, DPX, TGA, and more. Requires ImageMagick 7
+        installed on the system. Not included in the imageio-native aggregator —
+        add this dependency explicitly to opt in.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
+            <artifactId>imageio-native-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
+            <artifactId>imageio-native-common</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
