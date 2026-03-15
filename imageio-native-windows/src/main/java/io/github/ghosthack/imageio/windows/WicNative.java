@@ -190,6 +190,18 @@ final class WicNative {
     private static final MethodHandle Factory_CreateStream = LINKER.downcallHandle(
             FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
 
+    // IWICImagingFactory::CreateDecoderFromFilename (vtable[3])
+    //   HRESULT CreateDecoderFromFilename([in] this, [in] LPCWSTR wzFilename,
+    //       [in] const GUID *pguidVendor, [in] DWORD dwDesiredAccess,
+    //       [in] WICDecodeOptions metadataOptions, [out] IWICBitmapDecoder **ppIDecoder)
+    private static final MethodHandle Factory_CreateDecoderFromFilename = LINKER.downcallHandle(
+            FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                    ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                    ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+
+    /** GENERIC_READ = 0x80000000 */
+    private static final int GENERIC_READ = 0x80000000;
+
     // IWICImagingFactory::CreateDecoderFromStream (vtable[4])
     //   HRESULT CreateDecoderFromStream([in] this, [in] IStream *pIStream,
     //       [in] const GUID *pguidVendor, [in] DWORD dwOptions, [out] IWICBitmapDecoder **ppIDecoder)
@@ -469,13 +481,140 @@ final class WicNative {
         }
     }
 
+    // ── Shared helpers: operate on a WIC decoder ──────────────────────
+
+    /**
+     * Reads image dimensions from a WIC decoder (metadata only, no pixel copy).
+     * The caller owns the decoder and is responsible for releasing it.
+     */
+    private static int[] getSizeFromDecoder(Arena arena, MemorySegment decoder)
+            throws java.io.IOException {
+        MemorySegment frame = MemorySegment.NULL;
+        try {
+            MemorySegment ppFrame = arena.allocate(ValueLayout.ADDRESS);
+            check((int) Decoder_GetFrame.invokeExact(
+                    vtable(decoder, 13), decoder, 0, ppFrame),
+                    "Failed to read image frame");
+            frame = ppFrame.get(ValueLayout.ADDRESS, 0);
+
+            MemorySegment pWidth = arena.allocate(ValueLayout.JAVA_INT);
+            MemorySegment pHeight = arena.allocate(ValueLayout.JAVA_INT);
+            check((int) Source_GetSize.invokeExact(
+                    vtable(frame, 3), frame, pWidth, pHeight),
+                    "IWICBitmapSource::GetSize failed");
+            int w = pWidth.get(ValueLayout.JAVA_INT, 0);
+            int h = pHeight.get(ValueLayout.JAVA_INT, 0);
+            if (w <= 0 || h <= 0)
+                throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
+
+            int orientation = readExifOrientation(arena, frame);
+            if (orientation >= 5 && orientation <= 8) {
+                return new int[]{h, w};
+            }
+            return new int[]{w, h};
+        } catch (java.io.IOException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new javax.imageio.IIOException("Native WIC size query failed", t);
+        } finally {
+            release(frame);
+        }
+    }
+
+    /**
+     * Decodes a full image from a WIC decoder with EXIF orientation applied.
+     * The caller owns the decoder and is responsible for releasing it.
+     */
+    private static BufferedImage decodeFromDecoder(Arena arena, MemorySegment factory,
+                                                    MemorySegment decoder) throws java.io.IOException {
+        MemorySegment frame = MemorySegment.NULL;
+        MemorySegment flipRotator = MemorySegment.NULL;
+        MemorySegment converter = MemorySegment.NULL;
+        try {
+            MemorySegment ppFrame = arena.allocate(ValueLayout.ADDRESS);
+            check((int) Decoder_GetFrame.invokeExact(
+                    vtable(decoder, 13), decoder, 0, ppFrame),
+                    "IWICBitmapDecoder::GetFrame(0) failed");
+            frame = ppFrame.get(ValueLayout.ADDRESS, 0);
+
+            // EXIF orientation → optional flip-rotator
+            int orientation = readExifOrientation(arena, frame);
+            MemorySegment converterSource = frame;
+
+            if (orientation != 1) {
+                int transform = exifToWicTransform(orientation);
+                if (transform != WICBitmapTransformRotate0) {
+                    MemorySegment ppFlipRotator = arena.allocate(ValueLayout.ADDRESS);
+                    check((int) Factory_CreateBitmapFlipRotator.invokeExact(
+                            vtable(factory, 13), factory, ppFlipRotator),
+                            "IWICImagingFactory::CreateBitmapFlipRotator failed");
+                    flipRotator = ppFlipRotator.get(ValueLayout.ADDRESS, 0);
+
+                    check((int) FlipRotator_Initialize.invokeExact(
+                            vtable(flipRotator, 8), flipRotator, frame, transform),
+                            "IWICBitmapFlipRotator::Initialize failed");
+                    converterSource = flipRotator;
+                }
+            }
+
+            // Format converter → 32bppPBGRA
+            MemorySegment ppConverter = arena.allocate(ValueLayout.ADDRESS);
+            check((int) Factory_CreateFormatConverter.invokeExact(
+                    vtable(factory, 10), factory, ppConverter),
+                    "IWICImagingFactory::CreateFormatConverter failed");
+            converter = ppConverter.get(ValueLayout.ADDRESS, 0);
+
+            check((int) Converter_Initialize.invokeExact(
+                    vtable(converter, 8), converter, converterSource,
+                    GUID_PIXEL_FORMAT_PBGRA,
+                    WICBitmapDitherTypeNone,
+                    MemorySegment.NULL, 0.0, WICBitmapPaletteTypeCustom),
+                    "IWICFormatConverter::Initialize failed");
+
+            // Get dimensions (post-rotation)
+            MemorySegment pWidth = arena.allocate(ValueLayout.JAVA_INT);
+            MemorySegment pHeight = arena.allocate(ValueLayout.JAVA_INT);
+            check((int) Source_GetSize.invokeExact(
+                    vtable(converter, 3), converter, pWidth, pHeight),
+                    "IWICBitmapSource::GetSize failed");
+            int w = pWidth.get(ValueLayout.JAVA_INT, 0);
+            int h = pHeight.get(ValueLayout.JAVA_INT, 0);
+            if (w <= 0 || h <= 0)
+                throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
+            long totalPixels = (long) w * h;
+            if (totalPixels > MAX_PIXELS)
+                throw new javax.imageio.IIOException(
+                        "Image too large: " + w + "x" + h + " (" + totalPixels
+                                + " pixels exceeds limit of " + MAX_PIXELS + ")");
+
+            // Copy pixels
+            long stride = (long) w * 4;
+            long bufSize = stride * h;
+            MemorySegment pixelData = arena.allocate(bufSize, 16);
+            check((int) Source_CopyPixels.invokeExact(
+                    vtable(converter, 7), converter,
+                    MemorySegment.NULL, (int) stride, (int) bufSize, pixelData),
+                    "IWICBitmapSource::CopyPixels failed");
+
+            BufferedImage result = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
+            int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
+            MemorySegment.copy(pixelData, ValueLayout.JAVA_INT, 0, dest, 0, dest.length);
+            return result;
+        } catch (java.io.IOException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new javax.imageio.IIOException("Native WIC image decode failed", t);
+        } finally {
+            release(converter);
+            release(flipRotator);
+            release(frame);
+        }
+    }
+
     // ── Lightweight size query ─────────────────────────────────────────
 
     /**
      * Returns image dimensions without full pixel decode.
-     * <p>
-     * Creates a WIC decoder and reads frame size but does not create a format
-     * converter or copy pixels — significantly lighter than {@link #decode}.
      *
      * @param imageData the raw image file bytes
      * @return dimensions as {@code [width, height]}
@@ -487,7 +626,6 @@ final class WicNative {
 
         MemorySegment stream = MemorySegment.NULL;
         MemorySegment decoder = MemorySegment.NULL;
-        MemorySegment frame = MemorySegment.NULL;
 
         try (Arena arena = Arena.ofConfined()) {
             int hrInit = (int) CoInitializeEx.invokeExact(MemorySegment.NULL, COINIT_MULTITHREADED);
@@ -516,31 +654,8 @@ final class WicNative {
                         "Unsupported image format");
                 decoder = ppDecoder.get(ValueLayout.ADDRESS, 0);
 
-                MemorySegment ppFrame = arena.allocate(ValueLayout.ADDRESS);
-                check((int) Decoder_GetFrame.invokeExact(
-                        vtable(decoder, 13), decoder, 0, ppFrame),
-                        "Failed to read image frame");
-                frame = ppFrame.get(ValueLayout.ADDRESS, 0);
-
-                // GetSize on the frame — no format converter or pixel copy needed
-                MemorySegment pWidth = arena.allocate(ValueLayout.JAVA_INT);
-                MemorySegment pHeight = arena.allocate(ValueLayout.JAVA_INT);
-                check((int) Source_GetSize.invokeExact(
-                        vtable(frame, 3), frame, pWidth, pHeight),
-                        "IWICBitmapSource::GetSize failed");
-                int w = pWidth.get(ValueLayout.JAVA_INT, 0);
-                int h = pHeight.get(ValueLayout.JAVA_INT, 0);
-                if (w <= 0 || h <= 0)
-                    throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
-
-                // EXIF orientations 5-8 swap width/height (90°/270° rotations)
-                int orientation = readExifOrientation(arena, frame);
-                if (orientation >= 5 && orientation <= 8) {
-                    return new int[]{h, w};
-                }
-                return new int[]{w, h};
+                return getSizeFromDecoder(arena, decoder);
             } finally {
-                release(frame);
                 release(decoder);
                 release(stream);
                 if (weInitialisedCom) {
@@ -554,27 +669,56 @@ final class WicNative {
         }
     }
 
+    /**
+     * Returns image dimensions by reading directly from a file path.
+     * Avoids loading the entire file into the Java heap.
+     *
+     * @param path absolute file path
+     * @return dimensions as {@code [width, height]}
+     * @throws javax.imageio.IIOException if the native size query fails or OS is not Windows
+     */
+    static int[] getSizeFromPath(String path) throws java.io.IOException {
+        if (!IS_WINDOWS)
+            throw new javax.imageio.IIOException("WIC is only available on Windows");
+
+        MemorySegment decoder = MemorySegment.NULL;
+
+        try (Arena arena = Arena.ofConfined()) {
+            int hrInit = (int) CoInitializeEx.invokeExact(MemorySegment.NULL, COINIT_MULTITHREADED);
+            boolean weInitialisedCom = (hrInit == S_OK);
+
+            try {
+                MemorySegment factory = cachedFactory();
+                if (MemorySegment.NULL.equals(factory))
+                    throw new javax.imageio.IIOException("Failed to create WIC factory");
+
+                MemorySegment wpath = wstr(arena, path);
+                MemorySegment ppDecoder = arena.allocate(ValueLayout.ADDRESS);
+                check((int) Factory_CreateDecoderFromFilename.invokeExact(
+                        vtable(factory, 3), factory, wpath,
+                        MemorySegment.NULL, GENERIC_READ,
+                        WICDecodeMetadataCacheOnDemand, ppDecoder),
+                        "Unsupported image format: " + path);
+                decoder = ppDecoder.get(ValueLayout.ADDRESS, 0);
+
+                return getSizeFromDecoder(arena, decoder);
+            } finally {
+                release(decoder);
+                if (weInitialisedCom) {
+                    CoUninitialize.invokeExact();
+                }
+            }
+        } catch (java.io.IOException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new javax.imageio.IIOException("Native WIC size query failed for: " + path, t);
+        }
+    }
+
     // ── Public decode entry point ───────────────────────────────────────
 
     /**
-     * Decodes raw image bytes through WIC and returns a {@link BufferedImage}
-     * of type {@code TYPE_INT_ARGB_PRE}.
-     * <p>
-     * The pipeline:
-     * <ol>
-     *   <li>CoInitializeEx (multithreaded)</li>
-     *   <li>Create IWICImagingFactory</li>
-     *   <li>Create IWICStream, initialise from memory</li>
-     *   <li>CreateDecoderFromStream</li>
-     *   <li>GetFrame(0) → IWICBitmapFrameDecode</li>
-     *   <li>Read EXIF orientation; if != 1, create IWICBitmapFlipRotator</li>
-     *   <li>CreateFormatConverter → Initialize to 32bppPBGRA</li>
-     *   <li>GetSize + CopyPixels into Java array</li>
-     *   <li>Wrap in BufferedImage(TYPE_INT_ARGB_PRE)</li>
-     * </ol>
-     * <p>
-     * BGRA premultiplied pixels read as little-endian ints produce 0xAARRGGBB,
-     * which maps directly to {@code TYPE_INT_ARGB_PRE} — zero conversion overhead.
+     * Decodes raw image bytes through WIC.
      *
      * @param imageData the raw image file bytes
      * @return decoded image
@@ -586,22 +730,16 @@ final class WicNative {
 
         MemorySegment stream = MemorySegment.NULL;
         MemorySegment decoder = MemorySegment.NULL;
-        MemorySegment frame = MemorySegment.NULL;
-        MemorySegment flipRotator = MemorySegment.NULL;
-        MemorySegment converter = MemorySegment.NULL;
 
         try (Arena arena = Arena.ofConfined()) {
-            // 1. COM init
             int hrInit = (int) CoInitializeEx.invokeExact(MemorySegment.NULL, COINIT_MULTITHREADED);
             boolean weInitialisedCom = (hrInit == S_OK);
 
             try {
-                // 2. Cached WIC factory
                 MemorySegment factory = cachedFactory();
                 if (MemorySegment.NULL.equals(factory))
                     throw new javax.imageio.IIOException("Failed to create WIC factory");
 
-                // 3. Create IWICStream and initialise from memory
                 MemorySegment ppStream = arena.allocate(ValueLayout.ADDRESS);
                 check((int) Factory_CreateStream.invokeExact(
                         vtable(factory, 14), factory, ppStream),
@@ -613,99 +751,15 @@ final class WicNative {
                         vtable(stream, 16), stream, nativeBuf, imageData.length),
                         "IWICStream::InitializeFromMemory failed");
 
-                // 4. Create decoder from stream
                 MemorySegment ppDecoder = arena.allocate(ValueLayout.ADDRESS);
                 check((int) Factory_CreateDecoderFromStream.invokeExact(
                         vtable(factory, 4), factory, stream,
-                        MemorySegment.NULL, // no vendor preference
-                        WICDecodeMetadataCacheOnDemand, ppDecoder),
+                        MemorySegment.NULL, WICDecodeMetadataCacheOnDemand, ppDecoder),
                         "IWICImagingFactory::CreateDecoderFromStream failed");
                 decoder = ppDecoder.get(ValueLayout.ADDRESS, 0);
 
-                // 5. Get frame 0
-                MemorySegment ppFrame = arena.allocate(ValueLayout.ADDRESS);
-                check((int) Decoder_GetFrame.invokeExact(
-                        vtable(decoder, 13), decoder, 0, ppFrame),
-                        "IWICBitmapDecoder::GetFrame(0) failed");
-                frame = ppFrame.get(ValueLayout.ADDRESS, 0);
-
-                // 5b. Read EXIF orientation and optionally create flip-rotator
-                //     Pipeline: frame → [flipRotator] → converter → CopyPixels
-                int orientation = readExifOrientation(arena, frame);
-                MemorySegment converterSource = frame; // default: feed frame directly to converter
-
-                if (orientation != 1) {
-                    int transform = exifToWicTransform(orientation);
-                    // Defensive: readExifOrientation constrains to 1-8, so
-                    // exifToWicTransform(2-8) never returns Rotate0.  The
-                    // guard stays as a safety net against future changes.
-                    if (transform != WICBitmapTransformRotate0) {
-                        MemorySegment ppFlipRotator = arena.allocate(ValueLayout.ADDRESS);
-                        check((int) Factory_CreateBitmapFlipRotator.invokeExact(
-                                vtable(factory, 13), factory, ppFlipRotator),
-                                "IWICImagingFactory::CreateBitmapFlipRotator failed");
-                        flipRotator = ppFlipRotator.get(ValueLayout.ADDRESS, 0);
-
-                        check((int) FlipRotator_Initialize.invokeExact(
-                                vtable(flipRotator, 8), flipRotator, frame, transform),
-                                "IWICBitmapFlipRotator::Initialize failed");
-                        converterSource = flipRotator;
-                    }
-                }
-
-                // 6. Create format converter and initialise to 32bppPBGRA
-                MemorySegment ppConverter = arena.allocate(ValueLayout.ADDRESS);
-                check((int) Factory_CreateFormatConverter.invokeExact(
-                        vtable(factory, 10), factory, ppConverter),
-                        "IWICImagingFactory::CreateFormatConverter failed");
-                converter = ppConverter.get(ValueLayout.ADDRESS, 0);
-
-                check((int) Converter_Initialize.invokeExact(
-                        vtable(converter, 8), converter, converterSource,
-                        GUID_PIXEL_FORMAT_PBGRA,
-                        WICBitmapDitherTypeNone,
-                        MemorySegment.NULL, // no palette
-                        0.0,                // alpha threshold
-                        WICBitmapPaletteTypeCustom),
-                        "IWICFormatConverter::Initialize failed");
-
-                // 7. Get dimensions (post-rotation)
-                MemorySegment pWidth = arena.allocate(ValueLayout.JAVA_INT);
-                MemorySegment pHeight = arena.allocate(ValueLayout.JAVA_INT);
-                check((int) Source_GetSize.invokeExact(
-                        vtable(converter, 3), converter, pWidth, pHeight),
-                        "IWICBitmapSource::GetSize failed");
-                int w = pWidth.get(ValueLayout.JAVA_INT, 0);
-                int h = pHeight.get(ValueLayout.JAVA_INT, 0);
-                if (w <= 0 || h <= 0)
-                    throw new javax.imageio.IIOException("Invalid image dimensions: " + w + "x" + h);
-                long totalPixels = (long) w * h;
-                if (totalPixels > MAX_PIXELS)
-                    throw new javax.imageio.IIOException(
-                            "Image too large: " + w + "x" + h + " (" + totalPixels
-                                    + " pixels exceeds limit of " + MAX_PIXELS + ")");
-
-                // 8. Copy pixels (use long arithmetic to avoid int overflow)
-                long stride = (long) w * 4;
-                long bufSize = stride * h;
-                MemorySegment pixelData = arena.allocate(bufSize, 16);
-                check((int) Source_CopyPixels.invokeExact(
-                        vtable(converter, 7), converter,
-                        MemorySegment.NULL, // entire bitmap
-                        (int) stride, (int) bufSize, pixelData),
-                        "IWICBitmapSource::CopyPixels failed");
-
-                // 9. Build BufferedImage
-                // WIC PBGRA (little-endian) → LE int reads as 0xAARRGGBB → TYPE_INT_ARGB_PRE
-                BufferedImage result = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
-                int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
-                MemorySegment.copy(pixelData, ValueLayout.JAVA_INT, 0, dest, 0, dest.length);
-
-                return result;
+                return decodeFromDecoder(arena, factory, decoder);
             } finally {
-                release(converter);
-                release(flipRotator);
-                release(frame);
                 release(decoder);
                 release(stream);
                 if (weInitialisedCom) {
@@ -716,6 +770,52 @@ final class WicNative {
             throw e;
         } catch (Throwable t) {
             throw new javax.imageio.IIOException("Native WIC image decode failed", t);
+        }
+    }
+
+    /**
+     * Decodes an image directly from a file path through WIC.
+     * Avoids loading the entire file into the Java heap.
+     *
+     * @param path absolute file path
+     * @return decoded image
+     * @throws javax.imageio.IIOException if the native decode fails or OS is not Windows
+     */
+    static BufferedImage decodeFromPath(String path) throws java.io.IOException {
+        if (!IS_WINDOWS)
+            throw new javax.imageio.IIOException("WIC decoding is only available on Windows");
+
+        MemorySegment decoder = MemorySegment.NULL;
+
+        try (Arena arena = Arena.ofConfined()) {
+            int hrInit = (int) CoInitializeEx.invokeExact(MemorySegment.NULL, COINIT_MULTITHREADED);
+            boolean weInitialisedCom = (hrInit == S_OK);
+
+            try {
+                MemorySegment factory = cachedFactory();
+                if (MemorySegment.NULL.equals(factory))
+                    throw new javax.imageio.IIOException("Failed to create WIC factory");
+
+                MemorySegment wpath = wstr(arena, path);
+                MemorySegment ppDecoder = arena.allocate(ValueLayout.ADDRESS);
+                check((int) Factory_CreateDecoderFromFilename.invokeExact(
+                        vtable(factory, 3), factory, wpath,
+                        MemorySegment.NULL, GENERIC_READ,
+                        WICDecodeMetadataCacheOnDemand, ppDecoder),
+                        "WIC decode failed for: " + path);
+                decoder = ppDecoder.get(ValueLayout.ADDRESS, 0);
+
+                return decodeFromDecoder(arena, factory, decoder);
+            } finally {
+                release(decoder);
+                if (weInitialisedCom) {
+                    CoUninitialize.invokeExact();
+                }
+            }
+        } catch (java.io.IOException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new javax.imageio.IIOException("Native WIC image decode failed for: " + path, t);
         }
     }
 }

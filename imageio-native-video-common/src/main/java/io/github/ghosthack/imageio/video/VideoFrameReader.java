@@ -89,7 +89,7 @@ class VideoFrameReader extends ImageReader {
                 "Use VideoFrameExtractor.extractFrame(Path, Duration) for direct access.");
     }
 
-    private VideoInfo info;
+    private volatile VideoInfo info;
 
     private VideoInfo getInfo() throws IOException {
         if (info == null) {

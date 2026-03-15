@@ -27,9 +27,18 @@ public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
     private static final boolean IS_WINDOWS = System.getProperty("os.name", "")
             .toLowerCase(Locale.ROOT).startsWith("win");
 
+    /**
+     * Returns {@code false} — the Windows video backend is not yet complete.
+     * <p>
+     * {@link #extractFrame} is still a stub (IMFSourceReader read-sample loop
+     * and pixel copy are not implemented).  Returning {@code false} prevents
+     * {@link io.github.ghosthack.imageio.video.VideoFrameExtractor} from
+     * selecting this provider via ServiceLoader.
+     */
     @Override
     public boolean isAvailable() {
-        return IS_WINDOWS;
+        // TODO: change to `return IS_WINDOWS;` once extractFrame is implemented
+        return false;
     }
 
     @Override

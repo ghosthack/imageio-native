@@ -28,4 +28,14 @@ public class WicImageReader extends NativeImageReader {
     protected BufferedImage nativeDecode(byte[] data) throws IOException {
         return WicNative.decode(data);
     }
+
+    @Override
+    protected int[] nativeGetSizeFromPath(String path) throws IOException {
+        return WicNative.getSizeFromPath(path);
+    }
+
+    @Override
+    protected BufferedImage nativeDecodeFromPath(String path) throws IOException {
+        return WicNative.decodeFromPath(path);
+    }
 }

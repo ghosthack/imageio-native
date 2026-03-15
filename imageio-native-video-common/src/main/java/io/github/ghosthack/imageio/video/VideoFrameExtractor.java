@@ -41,13 +41,24 @@ public final class VideoFrameExtractor {
 
     // ── Platform backend discovery ──────────────────────────────────────
 
+    /** Cached provider; {@code null} until first lookup. */
     private static volatile VideoFrameExtractorProvider provider;
 
-    private static VideoFrameExtractorProvider provider() {
+    /** Sentinel indicating that discovery ran but found no backend. */
+    private static volatile boolean discoveryDone;
+
+    /**
+     * Discovers and returns the platform provider, or {@code null} if none
+     * is available.  Result is cached after the first successful lookup.
+     */
+    private static VideoFrameExtractorProvider providerOrNull() {
         VideoFrameExtractorProvider p = provider;
         if (p != null) return p;
+        if (discoveryDone) return null;     // already searched, nothing found
         synchronized (VideoFrameExtractor.class) {
             if (provider != null) return provider;
+            if (discoveryDone) return null;
+
             // ServiceLoader
             for (VideoFrameExtractorProvider spi :
                     ServiceLoader.load(VideoFrameExtractorProvider.class)) {
@@ -64,19 +75,33 @@ public final class VideoFrameExtractor {
             } else if (os.startsWith("win")) {
                 className = "io.github.ghosthack.imageio.video.windows.WindowsVideoFrameExtractor";
             } else {
-                throw new UnsupportedOperationException(
-                        "No video frame extraction backend for OS: " + System.getProperty("os.name"));
+                discoveryDone = true;
+                return null;
             }
             try {
                 VideoFrameExtractorProvider impl = (VideoFrameExtractorProvider)
                         Class.forName(className).getDeclaredConstructor().newInstance();
-                provider = impl;
-                return impl;
-            } catch (ReflectiveOperationException e) {
-                throw new UnsupportedOperationException(
-                        "Backend class " + className + " not on classpath", e);
+                if (impl.isAvailable()) {
+                    provider = impl;
+                    return impl;
+                }
+            } catch (ReflectiveOperationException ignored) {
+                // Backend class not on classpath — fall through
             }
+            discoveryDone = true;
+            return null;
         }
+    }
+
+    /**
+     * Returns the platform provider, throwing if none is available.
+     */
+    private static VideoFrameExtractorProvider provider() {
+        VideoFrameExtractorProvider p = providerOrNull();
+        if (p == null)
+            throw new UnsupportedOperationException(
+                    "No video frame extraction backend for OS: " + System.getProperty("os.name"));
+        return p;
     }
 
     // ── Public API ──────────────────────────────────────────────────────
@@ -86,12 +111,7 @@ public final class VideoFrameExtractor {
      * for the current platform.
      */
     public static boolean isAvailable() {
-        try {
-            provider();
-            return true;
-        } catch (UnsupportedOperationException e) {
-            return false;
-        }
+        return providerOrNull() != null;
     }
 
     /**

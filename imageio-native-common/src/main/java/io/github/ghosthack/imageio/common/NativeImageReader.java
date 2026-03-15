@@ -7,9 +7,9 @@ import javax.imageio.ImageTypeSpecifier;
 import javax.imageio.metadata.IIOMetadata;
 import javax.imageio.spi.ImageReaderSpi;
 import javax.imageio.stream.ImageInputStream;
-import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
@@ -28,6 +28,11 @@ import java.util.List;
  *       lightweight {@link #nativeGetSize} — no pixel decode.</li>
  *   <li>Full pixel decode happens only in {@link #read}.</li>
  *   <li>Only still-image index 0 is supported.</li>
+ *   <li>When the input is file-backed and a subclass overrides the
+ *       path-based hooks ({@link #nativeGetSizeFromPath},
+ *       {@link #nativeDecodeFromPath}), the file path is passed directly
+ *       to the native decoder — avoiding loading the entire file into the
+ *       Java heap.</li>
  * </ul>
  */
 public abstract class NativeImageReader extends ImageReader {
@@ -37,6 +42,9 @@ public abstract class NativeImageReader extends ImageReader {
 
     /** Cached raw image bytes from a prior size query, reused by {@link #read}. */
     private byte[] cachedData;
+
+    /** Cached file path from a prior path-based size query, reused by {@link #read}. */
+    private String cachedPath;
 
     protected NativeImageReader(ImageReaderSpi originatingProvider) {
         super(originatingProvider);
@@ -57,6 +65,40 @@ public abstract class NativeImageReader extends ImageReader {
      */
     protected abstract BufferedImage nativeDecode(byte[] data) throws IOException;
 
+    // ── Optional path-based hooks (subclasses override for zero-copy) ──
+
+    /**
+     * Returns image dimensions by reading directly from a file path, without
+     * loading the file into the Java heap.
+     * <p>
+     * The default implementation returns {@code null}, which signals the
+     * caller to fall back to the byte[]-based {@link #nativeGetSize}.
+     * Subclasses should override this when the native decoder supports
+     * path/URL-based input (e.g. {@code CGImageSourceCreateWithURL} on macOS,
+     * {@code CreateDecoderFromFilename} on Windows).
+     *
+     * @param path absolute path to the image file
+     * @return dimensions as {@code [width, height]}, or {@code null} if
+     *         path-based access is not supported
+     */
+    protected int[] nativeGetSizeFromPath(String path) throws IOException {
+        return null;
+    }
+
+    /**
+     * Decodes an image directly from a file path, without loading the file
+     * into the Java heap.
+     * <p>
+     * The default implementation returns {@code null}, which signals the
+     * caller to fall back to the byte[]-based {@link #nativeDecode}.
+     *
+     * @param path absolute path to the image file
+     * @return decoded image, or {@code null} if path-based access is not supported
+     */
+    protected BufferedImage nativeDecodeFromPath(String path) throws IOException {
+        return null;
+    }
+
     // ── Lifecycle ───────────────────────────────────────────────────────
 
     @Override
@@ -64,12 +106,14 @@ public abstract class NativeImageReader extends ImageReader {
         super.setInput(input, seekForwardOnly, ignoreMetadata);
         cachedSize = null;
         cachedData = null;
+        cachedPath = null;
     }
 
     @Override
     public void dispose() {
         cachedSize = null;
         cachedData = null;
+        cachedPath = null;
         super.dispose();
     }
 
@@ -77,6 +121,19 @@ public abstract class NativeImageReader extends ImageReader {
 
     private int[] ensureSize() throws IOException {
         if (cachedSize != null) return cachedSize;
+
+        // Fast path: file-backed input → pass path directly to native decoder
+        String path = inputFilePath();
+        if (path != null) {
+            int[] size = nativeGetSizeFromPath(path);
+            if (size != null) {
+                cachedSize = size;
+                cachedPath = path;
+                return size;
+            }
+        }
+
+        // Fallback: read entire file into byte[]
         byte[] data = readAllBytes((ImageInputStream) getInput());
         cachedSize = nativeGetSize(data);
         cachedData = data;
@@ -114,6 +171,23 @@ public abstract class NativeImageReader extends ImageReader {
     public BufferedImage read(int imageIndex, ImageReadParam param) throws IOException {
         checkIndex(imageIndex);
         checkParam(param);
+
+        // Fast path: decode directly from file path (no Java heap copy)
+        String path = cachedPath;
+        cachedPath = null;
+        if (path == null) path = inputFilePath();
+        if (path != null) {
+            BufferedImage result = nativeDecodeFromPath(path);
+            if (result != null) {
+                cachedData = null;
+                processImageStarted(imageIndex);
+                processImageProgress(100.0f);
+                processImageComplete();
+                return result;
+            }
+        }
+
+        // Fallback: decode from byte[]
         byte[] data = cachedData;
         cachedData = null;          // allow GC after decode
         if (data == null) {
@@ -144,21 +218,53 @@ public abstract class NativeImageReader extends ImageReader {
             throw new IndexOutOfBoundsException("Only image index 0 is supported, got: " + imageIndex);
     }
 
+    /**
+     * Validates the {@code ImageReadParam}.
+     * <p>
+     * This reader always decodes the full image at full resolution into a
+     * {@code TYPE_INT_ARGB_PRE} buffer, so source region, subsampling,
+     * destination offset, and destination image are silently ignored
+     * (per the {@link ImageReader} contract for unsupported parameters).
+     * <p>
+     * The only check retained is {@code destinationType}: if the caller
+     * explicitly requests a type other than {@code TYPE_INT_ARGB_PRE},
+     * we reject it because the output type is fixed.
+     */
     private static void checkParam(ImageReadParam param) throws IIOException {
         if (param == null) return;
-        if (param.getSourceRegion() != null)
-            throw new IIOException("Source region selection is not supported by this reader");
-        if (param.getSourceXSubsampling() != 1 || param.getSourceYSubsampling() != 1)
-            throw new IIOException("Subsampling is not supported by this reader");
-        Point destOffset = param.getDestinationOffset();
-        if (destOffset != null && (destOffset.x != 0 || destOffset.y != 0))
-            throw new IIOException("Destination offset is not supported by this reader");
-        if (param.getDestination() != null)
-            throw new IIOException("Destination image is not supported by this reader");
+        // Reject an explicit destination type that conflicts with our output
         ImageTypeSpecifier destType = param.getDestinationType();
         if (destType != null
                 && destType.getBufferedImageType() != BufferedImage.TYPE_INT_ARGB_PRE)
             throw new IIOException("Only TYPE_INT_ARGB_PRE is supported as destination type");
+        // All other unsupported params (region, subsampling, destination,
+        // offset) are silently ignored per the ImageReader contract.
+    }
+
+    /**
+     * Attempts to extract a file path from the current input stream.
+     * <p>
+     * Uses duck-typing: if the input object has a public {@code getPath()}
+     * method returning a {@link Path}, the path is extracted and returned
+     * as a string.  This works transparently with
+     * {@code PathAwareImageInputStream} (from the video module) and any
+     * future stream implementation that exposes a file path.
+     *
+     * @return absolute file path, or {@code null} if the input is not file-backed
+     */
+    private String inputFilePath() {
+        Object in = getInput();
+        if (in == null) return null;
+        try {
+            java.lang.reflect.Method m = in.getClass().getMethod("getPath");
+            if (Path.class.isAssignableFrom(m.getReturnType())) {
+                Object result = m.invoke(in);
+                return result != null ? result.toString() : null;
+            }
+        } catch (Exception ignored) {
+            // Not a path-aware stream
+        }
+        return null;
     }
 
     private byte[] readAllBytes(ImageInputStream stream) throws IOException {
