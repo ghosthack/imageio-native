@@ -26,7 +26,7 @@ public final class BackendPriority {
     public static final String PROPERTY = "imageio.native.backend.priority";
 
     /** Default ordering when no system property is set. */
-    private static final String DEFAULT_ORDER = "native,vips,magick";
+    private static final String DEFAULT_ORDER = "native,vips,magick,ffmpeg";
 
     /** Global ordering: backend name → priority index (lower = higher priority). */
     private static final Map<String, Integer> GLOBAL_PRIORITY;

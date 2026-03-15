@@ -5,7 +5,6 @@ import javax.imageio.ImageReader;
 import javax.imageio.ImageTypeSpecifier;
 import javax.imageio.metadata.IIOMetadata;
 import javax.imageio.spi.ImageReaderSpi;
-import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -14,19 +13,27 @@ import java.util.Iterator;
 import java.util.List;
 
 /**
- * ImageReader that extracts the poster frame from a video file.
+ * {@link ImageReader} that extracts the poster frame from a video file.
  * <p>
- * This reader supports a single image (the poster frame at t=0).
- * It requires the input to be a {@link PathAwareImageInputStream} so that
+ * This is a concrete class (not abstract) that delegates to a
+ * {@link VideoFrameExtractorProvider} for actual frame extraction.  Each
+ * video backend's SPI creates an instance of this class with its provider.
+ * <p>
+ * Supports a single image (the poster frame at t=0).  For time-based
+ * extraction or multi-frame access, use {@link VideoFrameExtractor} directly.
+ * <p>
+ * Requires the input to be a {@link PathAwareImageInputStream} so that
  * the file path can be passed to the native video extraction APIs.
- * <p>
- * For time-based extraction or multi-frame access, use
- * {@link VideoFrameExtractor} directly.
  */
-class VideoFrameReader extends ImageReader {
+public class NativeVideoReader extends ImageReader {
 
-    VideoFrameReader(ImageReaderSpi originatingProvider) {
+    private final VideoFrameExtractorProvider provider;
+    private volatile VideoInfo cachedInfo;
+
+    public NativeVideoReader(ImageReaderSpi originatingProvider,
+                             VideoFrameExtractorProvider extractorProvider) {
         super(originatingProvider);
+        this.provider = extractorProvider;
     }
 
     @Override
@@ -37,13 +44,13 @@ class VideoFrameReader extends ImageReader {
     @Override
     public int getWidth(int imageIndex) throws IOException {
         checkIndex(imageIndex);
-        return getInfo().width();
+        return ensureInfo().width();
     }
 
     @Override
     public int getHeight(int imageIndex) throws IOException {
         checkIndex(imageIndex);
-        return getInfo().height();
+        return ensureInfo().height();
     }
 
     @Override
@@ -58,7 +65,11 @@ class VideoFrameReader extends ImageReader {
     public BufferedImage read(int imageIndex, ImageReadParam param) throws IOException {
         checkIndex(imageIndex);
         Path path = getFilePath();
-        return VideoFrameExtractor.extractThumbnail(path);
+        processImageStarted(imageIndex);
+        BufferedImage result = provider.extractFrame(path, Duration.ZERO);
+        processImageProgress(100.0f);
+        processImageComplete();
+        return result;
     }
 
     @Override
@@ -69,6 +80,20 @@ class VideoFrameReader extends ImageReader {
     @Override
     public IIOMetadata getImageMetadata(int imageIndex) {
         return null;
+    }
+
+    // ── Lifecycle ───────────────────────────────────────────────────────
+
+    @Override
+    public void setInput(Object input, boolean seekForwardOnly, boolean ignoreMetadata) {
+        super.setInput(input, seekForwardOnly, ignoreMetadata);
+        cachedInfo = null;
+    }
+
+    @Override
+    public void dispose() {
+        cachedInfo = null;
+        super.dispose();
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
@@ -85,15 +110,15 @@ class VideoFrameReader extends ImageReader {
             return pais.getPath();
         }
         throw new IOException(
-                "VideoFrameReader requires PathAwareImageInputStream input. " +
-                "Use VideoFrameExtractor.extractFrame(Path, Duration) for direct access.");
+                "NativeVideoReader requires PathAwareImageInputStream input. "
+                + "Use VideoFrameExtractor.extractFrame(Path, Duration) for direct access.");
     }
 
-    private volatile VideoInfo info;
-
-    private VideoInfo getInfo() throws IOException {
+    private VideoInfo ensureInfo() throws IOException {
+        VideoInfo info = cachedInfo;
         if (info == null) {
-            info = VideoFrameExtractor.getInfo(getFilePath());
+            info = provider.getInfo(getFilePath());
+            cachedInfo = info;
         }
         return info;
     }

@@ -170,15 +170,15 @@ sudo apt install libmagickwand-7-dev
 When multiple backends are on the classpath (e.g. platform-native + vips), the consumer controls which backend handles each format via system properties:
 
 ```
-# Global ordering (left = highest priority). Default: native,vips,magick
--Dimageio.native.backend.priority=native,vips,magick
+# Global ordering (left = highest priority). Default: native,vips,magick,ffmpeg
+-Dimageio.native.backend.priority=native,vips,magick,ffmpeg
 
 # Per-format override
 -Dimageio.native.backend.priority.jpeg=vips,native
 -Dimageio.native.backend.priority.tiff=vips
 ```
 
-With no properties set, the default ordering is: platform-native first, then vips. This means existing users see no change when adding `imageio-native-vips` to the classpath -- it only activates for formats the platform-native backend can't handle.
+With no properties set, the default ordering is: platform-native first, then vips, then magick, then ffmpeg. Existing users see no change when adding optional backends -- they only activate for formats the higher-priority backends can't handle.
 
 ## Video poster frames
 
@@ -219,8 +219,34 @@ VideoInfo info = VideoFrameExtractor.getInfo(Path.of("clip.mp4"));
 |--------|----------|------------|------------|
 | `imageio-native-video-apple` | macOS | AVFoundation (AVAssetImageGenerator) | MP4, MOV, M4V, 3GP |
 | `imageio-native-video-windows` | Windows 10+ | Media Foundation (IMFSourceReader) | *In progress* |
+| `imageio-native-video-ffmpeg` | Any (optional) | FFmpeg libavformat/libavcodec | All FFmpeg-supported containers |
 
 The Windows video backend is not yet complete -- `isAvailable()` returns `false` until the implementation is finished. See `TODO-windows.md` for details.
+
+### FFmpeg video backend
+
+The `imageio-native-video-ffmpeg` module is an optional cross-platform video backend. It works on any OS where FFmpeg libraries are installed, including **Linux** (the only video backend available on Linux).
+
+```xml
+<dependency>
+    <groupId>io.github.ghosthack</groupId>
+    <artifactId>imageio-native-video-ffmpeg</artifactId>
+    <version>1.0.2</version>
+</dependency>
+```
+
+```sh
+# macOS (MacPorts)
+sudo port install ffmpeg
+
+# macOS (Homebrew)
+brew install ffmpeg
+
+# Debian/Ubuntu
+sudo apt install libavformat-dev libavcodec-dev libswscale-dev libavutil-dev
+```
+
+Struct offsets are version-specific. Currently supports FFmpeg 4.x (libavcodec major 58). The backend detects the FFmpeg version at runtime via `avcodec_version()` and disables itself if the version is not recognized. Additional version support can be added by providing offset tables.
 
 ## Architecture
 
@@ -292,6 +318,7 @@ Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped fo
 ├── imageio-native-video/            cross-platform video aggregator
 ├── imageio-native-vips/             optional libvips backend
 ├── imageio-native-magick/           optional ImageMagick 7 backend
+├── imageio-native-video-ffmpeg/     optional FFmpeg video backend
 ├── scripts/                         test fixture generators
 └── example-consumer/                standalone demo (not in reactor)
 ```
