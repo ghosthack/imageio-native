@@ -6,7 +6,7 @@ Java ImageIO readers that delegate to **platform-native image decoding APIs** vi
 
 Drop the JAR on your classpath and `ImageIO.read()` gains support for **HEIC, AVIF, WEBP, JPEG 2000, JPEG XL, camera RAW, PSD, EXR**, and more. No JNI, no native builds, no manual SPI wiring.
 
-Decode only. Still images only. Both modules are pure Java — they compile on any OS and auto-detect the platform at runtime.
+Decode only. Still images only (video files yield a single poster frame). All modules are pure Java — they compile on any OS and auto-detect the platform at runtime.
 
 ## Quick start
 
@@ -111,6 +111,48 @@ Class.forName("io.github.ghosthack.imageio.apple.AppleImageReaderSpi");
 Class.forName("io.github.ghosthack.imageio.windows.WicImageReaderSpi");
 ```
 
+## Video poster frames
+
+The optional `imageio-native-video` module extracts a **single still image** from a video file -- the same way the image modules decode a still image from a HEIC or WebP file. The output is always a `BufferedImage`; no video playback, no audio, no frame sequences.
+
+This means `ImageIO.read(new File("clip.mp4"))` works exactly like `ImageIO.read(new File("photo.heic"))` -- same API, same result type.
+
+```xml
+<dependency>
+    <groupId>io.github.ghosthack</groupId>
+    <artifactId>imageio-native-video</artifactId>
+    <version>1.0.2</version>
+</dependency>
+```
+
+Through the standard ImageIO SPI:
+
+```java
+// Poster frame via ImageIO -- identical to reading any image
+BufferedImage poster = ImageIO.read(new File("clip.mp4"));
+```
+
+Or through the direct API for more control:
+
+```java
+// Thumbnail (poster frame at or near t=0)
+BufferedImage thumb = VideoFrameExtractor.extractThumbnail(Path.of("clip.mp4"));
+
+// Frame at a specific time
+BufferedImage frame = VideoFrameExtractor.extractFrame(
+        Path.of("clip.mp4"), Duration.ofSeconds(30));
+
+// Video metadata (dimensions, duration, codec, frame rate)
+VideoInfo info = VideoFrameExtractor.getInfo(Path.of("clip.mp4"));
+```
+
+| Module | Platform | Native API | Containers |
+|--------|----------|------------|------------|
+| `imageio-native-video-apple` | macOS | AVFoundation (AVAssetImageGenerator) | MP4, MOV, M4V, 3GP |
+| `imageio-native-video-windows` | Windows 10+ | Media Foundation (IMFSourceReader) | *In progress* |
+
+The Windows video backend is not yet complete -- `isAvailable()` returns `false` until the implementation is finished. See `TODO-windows.md` for details.
+
 ## Architecture
 
 ```
@@ -172,9 +214,13 @@ Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped fo
 ```
 ├── pom.xml                          parent POM (reactor)
 ├── imageio-native-common/           shared format registry & detection
-├── imageio-native-apple/            macOS module (6 source files)
-├── imageio-native-windows/          Windows module (7 source files)
-├── imageio-native/                  cross-platform aggregator
+├── imageio-native-apple/            macOS image module
+├── imageio-native-windows/          Windows image module
+├── imageio-native/                  cross-platform image aggregator
+├── imageio-native-video-common/     shared video SPI & format detection
+├── imageio-native-video-apple/      macOS video module (AVFoundation)
+├── imageio-native-video-windows/    Windows video module (Media Foundation)
+├── imageio-native-video/            cross-platform video aggregator
 └── example-consumer/                standalone demo (not in reactor)
 ```
 

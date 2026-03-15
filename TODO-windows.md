@@ -178,24 +178,24 @@ static final MemorySegment GUID_NULL; // 16 zero bytes in global arena
 
 ---
 
-## 7. Fix test: `isAvailableOnWindows` now fails
+## 7. ~~Fix test: `isAvailableOnWindows` now fails~~ DONE
 
-**File**: `WindowsVideoFrameExtractorTest.java:54-56`
-
-The `isAvailableOnWindows` test asserts `assertTrue(extractor.isAvailable())`,
-but `isAvailable()` now returns `false`. This test will fail on Windows CI
-once the `@EnabledOnOs` gate passes.
-
-Fix: change the assertion to `assertFalse` with a note, or delete the test
-until the backend is complete. Alternatively, use `assumeTrue` so it skips
-rather than fails.
+Fixed in commit e818fe3:
+- `isAvailableOnWindows`: changed to `assertFalse`
+- `extractFrameNullPathThrows` / `getInfoNullPathThrows`: changed from
+  `NullPointerException` to `Exception` (null path now reaches WIC decoder
+  which wraps it in `IIOException`)
 
 ---
 
 ## 8. Re-enable the backend
 
-Once tasks 1-7 are done:
+Once tasks 1-6 are done:
 
 - `WindowsVideoFrameExtractor.isAvailable()`: change to `return IS_WINDOWS;`
 - `WindowsVideoFrameExtractorTest.isAvailableOnWindows()`: restore `assertTrue`
+- `extractFrameNullPathThrows`: restore to `NullPointerException` (add an
+  explicit null check in `extractFrame` before reaching the WIC decoder)
+- `getInfoNullPathThrows`: restore to `NullPointerException` (add an
+  explicit null check in `getInfo` before reaching the WIC decoder)
 - Verify all 8 tests pass on a Windows machine or Windows CI
