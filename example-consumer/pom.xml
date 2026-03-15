@@ -10,9 +10,9 @@
 
     <description>
         Minimal project that depends on imageio-native (cross-platform aggregator)
-        and verifies that HEIC, AVIF, and WEBP images can be decoded through both
-        standard javax.imageio.ImageIO and the direct ImageioNative API, with no
-        explicit reader setup.
+        and imageio-native-video, verifying that HEIC, AVIF, WEBP images and video
+        poster frames can be decoded through both standard javax.imageio.ImageIO
+        and the direct APIs, with no explicit reader setup.
     </description>
 
     <properties>
@@ -30,6 +30,12 @@
         <dependency>
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native</artifactId>
+            <version>1.0.2</version>
+        </dependency>
+        <!-- Video poster frame extraction (optional — adds MP4/MOV support to ImageIO) -->
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
+            <artifactId>imageio-native-video</artifactId>
             <version>1.0.2</version>
         </dependency>
         <!-- Shared test fixtures (test8x8.heic, .avif, .webp, .png) -->

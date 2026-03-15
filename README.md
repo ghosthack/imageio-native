@@ -221,6 +221,7 @@ Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped fo
 ├── imageio-native-video-apple/      macOS video module (AVFoundation)
 ├── imageio-native-video-windows/    Windows video module (Media Foundation)
 ├── imageio-native-video/            cross-platform video aggregator
+├── scripts/                         test fixture generators
 └── example-consumer/                standalone demo (not in reactor)
 ```
 
@@ -233,9 +234,11 @@ mvn clean test                        # compile + test
 mvn install -DskipTests               # install to local repo
 mvn -f example-consumer/pom.xml test  # example-consumer
 
-swift generate-heic-avif-cgimage.swift   # HEIC + AVIF (macOS CGImage)
-./generate-png-webp-chrome.sh           # PNG + WebP  (Chrome headless)
-python generate-all-pillow.py           # all formats (pip: pillow + plugins)
+swift scripts/generate-heic-avif-cgimage.swift   # HEIC + AVIF (macOS CGImage)
+./scripts/generate-png-webp-chrome.sh            # PNG + WebP  (Chrome headless)
+python scripts/generate-all-pillow.py            # all formats (pip: pillow + plugins)
+swift scripts/generate-video-fixtures.swift      # video fixtures (macOS AVFoundation)
+./scripts/generate-video-bframes.sh              # B-frame video fixture (ffmpeg)
 ```
 
 ## Releasing

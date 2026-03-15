@@ -63,6 +63,8 @@ class AppleVideoFrameExtractorTest {
         return extractResource("test-video-3s.mov");
     }
 
+
+
     @Test
     void extractFrameAtZero() throws Exception {
         AppleVideoFrameExtractor extractor = new AppleVideoFrameExtractor();
@@ -121,6 +123,29 @@ class AppleVideoFrameExtractorTest {
         assertEquals(16, thumb.getHeight());
     }
 
+    // ── B-frame fixture: non-zero start_pts, reproduces t=0 NULL bug ──
+
+    @Test
+    void extractThumbnailFromBframeVideo() throws Exception {
+        // This fixture has B-frames and start_pts=1014 (~66ms).
+        // copyCGImageAtTime returns NULL at t=0 with zero tolerance.
+        Path video = extractResource("test-video-3s-bframes.mp4");
+        BufferedImage thumb = VideoFrameExtractor.extractThumbnail(video);
+        assertNotNull(thumb, "Thumbnail should succeed for B-frame video with non-zero start_pts");
+        assertEquals(16, thumb.getWidth());
+        assertEquals(16, thumb.getHeight());
+    }
+
+    @Test
+    void extractFrameAtZeroFromBframeVideo() throws Exception {
+        AppleVideoFrameExtractor extractor = new AppleVideoFrameExtractor();
+        Path video = extractResource("test-video-3s-bframes.mp4");
+        BufferedImage frame = extractor.extractFrame(video, Duration.ZERO);
+        assertNotNull(frame, "Frame at t=0 should succeed with tolerance for B-frame video");
+        assertEquals(16, frame.getWidth());
+        assertEquals(16, frame.getHeight());
+    }
+
     @Test
     void extractFrameFromMovFile() throws Exception {
         AppleVideoFrameExtractor extractor = new AppleVideoFrameExtractor();
@@ -131,4 +156,5 @@ class AppleVideoFrameExtractorTest {
         int pixel = frame.getRGB(8, 8);
         TestPixels.assertColourClose("Red frame at t=0 (MOV)", RED, pixel, TOLERANCE);
     }
+
 }
