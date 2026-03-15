@@ -11,6 +11,8 @@ import java.util.Set;
  * Supports:
  * <ul>
  *   <li>ISO BMFF (MP4, MOV, M4V, 3GP) — {@code ftyp} box with a video brand</li>
+ *   <li>Classic QuickTime MOV — starts with {@code wide}, {@code mdat},
+ *       {@code moov}, or {@code free} atoms (no {@code ftyp})</li>
  *   <li>Matroska / WebM — EBML header {@code 0x1A45DFA3}</li>
  *   <li>AVI — RIFF header with AVI signature</li>
  * </ul>
@@ -41,6 +43,15 @@ public final class VideoFormatDetector {
     );
 
     /**
+     * Known QuickTime/MPEG-4 atom types that appear at the start of MOV/MP4 files.
+     * Classic QuickTime files may not have {@code ftyp} and instead start with
+     * {@code wide}, {@code mdat}, {@code moov}, {@code free}, or {@code skip}.
+     */
+    private static final Set<String> QT_ATOM_TYPES = Set.of(
+            "ftyp", "moov", "mdat", "wide", "free", "skip", "pnot"
+    );
+
+    /**
      * Returns {@code true} if the stream header matches a known video container format.
      * The stream position is restored after probing.
      */
@@ -50,7 +61,10 @@ public final class VideoFormatDetector {
             byte[] header = new byte[128];
             int n = stream.read(header);
             if (n < 12) return false;
-            return isVideoISOBMFF(header, n) || isEBML(header) || isAVI(header);
+            return isVideoISOBMFF(header, n)
+                    || isClassicQuickTime(header, n)
+                    || isEBML(header)
+                    || isAVI(header);
         } finally {
             stream.reset();
         }
@@ -86,6 +100,36 @@ public final class VideoFormatDetector {
         }
 
         return true; // ftyp present, no image brands → treat as video
+    }
+
+    /**
+     * Detects classic QuickTime MOV files that lack an {@code ftyp} atom.
+     * <p>
+     * These files start with atoms like {@code wide}, {@code mdat}, {@code moov},
+     * {@code free}, or {@code skip}.  We check that the first atom has a valid
+     * size (big-endian uint32 at offset 0) and a recognized atom type at offset 4-7.
+     * <p>
+     * This does NOT match ISO BMFF with {@code ftyp} — that's handled by
+     * {@link #isVideoISOBMFF} which also filters out image formats.
+     */
+    private static boolean isClassicQuickTime(byte[] h, int n) {
+        if (n < 8) return false;
+
+        // Atom type at offset 4..7
+        String atomType = new String(h, 4, 4, StandardCharsets.US_ASCII);
+        if ("ftyp".equals(atomType)) return false; // handled by isVideoISOBMFF
+        if (!QT_ATOM_TYPES.contains(atomType)) return false;
+
+        // Atom size at offset 0..3 (big-endian uint32)
+        int atomSize = ((h[0] & 0xFF) << 24)
+                     | ((h[1] & 0xFF) << 16)
+                     | ((h[2] & 0xFF) <<  8)
+                     | ((h[3] & 0xFF));
+
+        // Size 0 means "extends to end of file" (valid for mdat).
+        // Size 1 means "64-bit extended size" follows (valid).
+        // Otherwise, size must be >= 8 (minimum atom: 4-byte size + 4-byte type).
+        return atomSize == 0 || atomSize == 1 || atomSize >= 8;
     }
 
     /** EBML (Matroska/WebM): bytes 0-3 == 0x1A 0x45 0xDF 0xA3 */
