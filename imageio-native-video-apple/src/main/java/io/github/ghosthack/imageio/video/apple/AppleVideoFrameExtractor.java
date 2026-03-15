@@ -282,15 +282,21 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
                 MemorySegment selSetTransform = sel(arena, "setAppliesPreferredTrackTransform:");
                 msgSend_bool.invokeExact(generator, selSetTransform, (byte) 1);
 
-                // 6. Set tolerances to zero for exact frame seek
-                MemorySegment cmTimeZero = (MemorySegment) CMTimeMake.invokeExact(
-                        (SegmentAllocator) arena, 0L, 1);
-
+                // 6. Set tolerances for frame seek.
+                //    Using exact tolerance (zero) can fail for videos that don't have
+                //    a decodable frame at exactly the requested time (common at t=0
+                //    with B-frame / long-GOP content).
+                //    Start with a 1-second tolerance window so AVFoundation can pick
+                //    the nearest keyframe.
                 MemorySegment selSetBefore = sel(arena, "setRequestedTimeToleranceBefore:");
-                msgSend_cmtime_void.invokeExact(generator, selSetBefore, cmTimeZero);
-
                 MemorySegment selSetAfter = sel(arena, "setRequestedTimeToleranceAfter:");
-                msgSend_cmtime_void.invokeExact(generator, selSetAfter, cmTimeZero);
+
+                MemorySegment toleranceBefore = (MemorySegment) CMTimeMake.invokeExact(
+                        (SegmentAllocator) arena, 1L, 1); // 1 second
+                MemorySegment toleranceAfter = (MemorySegment) CMTimeMake.invokeExact(
+                        (SegmentAllocator) arena, 1L, 1);  // 1 second
+                msgSend_cmtime_void.invokeExact(generator, selSetBefore, toleranceBefore);
+                msgSend_cmtime_void.invokeExact(generator, selSetAfter, toleranceAfter);
 
                 // 7. Create CMTime from Duration
                 long millis = time.toMillis();
@@ -307,6 +313,23 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
                         cmTime,
                         MemorySegment.NULL,  // actualTime (don't need it)
                         errorPtr);
+
+                // 8b. If NULL, retry with default (unbounded) tolerances.
+                //     This handles edge cases where no keyframe exists within
+                //     the initial 1-second window (e.g. very long GOPs).
+                if (MemorySegment.NULL.equals(cgImage)) {
+                    MemorySegment largeTolerance = (MemorySegment) CMTimeMake.invokeExact(
+                            (SegmentAllocator) arena, 3600L, 1); // 1 hour
+                    msgSend_cmtime_void.invokeExact(generator, selSetBefore, largeTolerance);
+                    msgSend_cmtime_void.invokeExact(generator, selSetAfter, largeTolerance);
+
+                    errorPtr.set(ValueLayout.ADDRESS, 0, MemorySegment.NULL);
+                    cgImage = (MemorySegment) msgSend_cmtime_ptr_ptr.invokeExact(
+                            generator, selCopy,
+                            cmTime,
+                            MemorySegment.NULL,
+                            errorPtr);
+                }
 
                 if (MemorySegment.NULL.equals(cgImage)) {
                     throw new IOException("copyCGImageAtTime returned NULL for time " + time);
