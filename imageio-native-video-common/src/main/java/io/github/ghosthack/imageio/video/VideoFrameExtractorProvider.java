@@ -35,4 +35,18 @@ public interface VideoFrameExtractorProvider {
      * @throws IOException on read failure
      */
     VideoInfo getInfo(Path videoFile) throws IOException;
+
+    /**
+     * Returns the backend name for
+     * {@link io.github.ghosthack.imageio.common.BackendPriority} ordering.
+     * <p>
+     * Default is {@code "native"} for platform-native backends (AVFoundation,
+     * Media Foundation).  Third-party backends override this (e.g.
+     * {@code "ffmpeg"}).
+     *
+     * @return backend name
+     */
+    default String backendName() {
+        return "native";
+    }
 }

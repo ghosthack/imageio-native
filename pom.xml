@@ -57,6 +57,7 @@
         <module>imageio-native-video</module>
         <module>imageio-native-vips</module>
         <module>imageio-native-magick</module>
+        <module>imageio-native-video-ffmpeg</module>
     </modules>
 
     <properties>

@@ -1,12 +1,14 @@
 package io.github.ghosthack.imageio.video;
 
+import io.github.ghosthack.imageio.common.BackendPriority;
+
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
 import java.util.ServiceLoader;
 
 /**
@@ -48,46 +50,37 @@ public final class VideoFrameExtractor {
     private static volatile boolean discoveryDone;
 
     /**
-     * Discovers and returns the platform provider, or {@code null} if none
-     * is available.  Result is cached after the first successful lookup.
+     * Discovers and returns the highest-priority available provider, or
+     * {@code null} if none is available.
+     * <p>
+     * Collects all available providers via {@link ServiceLoader}, sorts them
+     * by {@link BackendPriority}, and caches the winner.
      */
     private static VideoFrameExtractorProvider providerOrNull() {
         VideoFrameExtractorProvider p = provider;
         if (p != null) return p;
-        if (discoveryDone) return null;     // already searched, nothing found
+        if (discoveryDone) return null;
         synchronized (VideoFrameExtractor.class) {
             if (provider != null) return provider;
             if (discoveryDone) return null;
 
-            // ServiceLoader
+            // Collect all available providers
+            List<VideoFrameExtractorProvider> available = new ArrayList<>();
             for (VideoFrameExtractorProvider spi :
                     ServiceLoader.load(VideoFrameExtractorProvider.class)) {
                 if (spi.isAvailable()) {
-                    provider = spi;
-                    return spi;
+                    available.add(spi);
                 }
             }
-            // Reflective fallback
-            String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-            String className;
-            if (os.contains("mac")) {
-                className = "io.github.ghosthack.imageio.video.apple.AppleVideoFrameExtractor";
-            } else if (os.startsWith("win")) {
-                className = "io.github.ghosthack.imageio.video.windows.WindowsVideoFrameExtractor";
-            } else {
-                discoveryDone = true;
-                return null;
+
+            if (!available.isEmpty()) {
+                // Sort by BackendPriority (lowest priority number = highest priority)
+                available.sort(Comparator.comparingInt(
+                        spi -> BackendPriority.priority(spi.backendName())));
+                provider = available.getFirst();
+                return provider;
             }
-            try {
-                VideoFrameExtractorProvider impl = (VideoFrameExtractorProvider)
-                        Class.forName(className).getDeclaredConstructor().newInstance();
-                if (impl.isAvailable()) {
-                    provider = impl;
-                    return impl;
-                }
-            } catch (ReflectiveOperationException ignored) {
-                // Backend class not on classpath — fall through
-            }
+
             discoveryDone = true;
             return null;
         }

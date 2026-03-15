@@ -10,20 +10,30 @@
         <version>1.0.2</version>
     </parent>
 
-    <artifactId>imageio-native-video-common</artifactId>
+    <artifactId>imageio-native-video-ffmpeg</artifactId>
     <packaging>jar</packaging>
 
-    <name>imageio-native-video-common</name>
+    <name>imageio-native-video-ffmpeg</name>
     <description>
-        Shared API for video frame extraction: VideoFrameExtractor, VideoInfo,
-        PathAwareImageInputStream, and ImageIO SPI registration for video formats.
+        Optional video poster frame extraction backed by FFmpeg (libavformat,
+        libavcodec, libswscale) via Project Panama. Adds cross-platform video
+        support including Linux. Requires FFmpeg libraries installed on the
+        system. Not included in the imageio-native-video aggregator — add this
+        dependency explicitly to opt in.
     </description>
 
     <dependencies>
         <dependency>
             <groupId>io.github.ghosthack</groupId>
-            <artifactId>imageio-native-common</artifactId>
+            <artifactId>imageio-native-video-common</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
+            <artifactId>imageio-native-video-common</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -36,12 +46,15 @@
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <goals><goal>test-jar</goal></goals>
-                    </execution>
-                </executions>
             </plugin>
         </plugins>
     </build>
