@@ -108,7 +108,7 @@
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>3.12.0</version>
                     <configuration>
-                        <doclint>none</doclint>
+                        <doclint>all,-missing</doclint>
                     </configuration>
                 </plugin>
                 <plugin>

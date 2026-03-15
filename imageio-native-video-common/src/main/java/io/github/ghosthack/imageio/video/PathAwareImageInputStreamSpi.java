@@ -1,6 +1,7 @@
 package io.github.ghosthack.imageio.video;
 
 import javax.imageio.spi.ImageInputStreamSpi;
+import javax.imageio.spi.ServiceRegistry;
 import javax.imageio.stream.ImageInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -21,6 +22,32 @@ public class PathAwareImageInputStreamSpi extends ImageInputStreamSpi {
 
     public PathAwareImageInputStreamSpi() {
         super("ghosthack", "1.0", File.class);
+    }
+
+    /**
+     * Ensures this SPI is ordered before any other {@code File}-based
+     * {@link ImageInputStreamSpi} (in particular the JDK's built-in
+     * {@code FileImageInputStream} SPI).
+     * <p>
+     * Without explicit ordering, the JDK's SPI may win, which would
+     * produce a plain {@code FileImageInputStream} instead of a
+     * {@link PathAwareImageInputStream}, breaking
+     * {@link VideoFrameReader}'s ability to recover the file path.
+     */
+    @Override
+    @SuppressWarnings("unchecked")
+    public void onRegistration(ServiceRegistry registry, Class<?> category) {
+        // Iterate all registered ImageInputStreamSpi providers that handle File
+        var others = registry.getServiceProviders(
+                (Class<ImageInputStreamSpi>) category, true);
+        while (others.hasNext()) {
+            ImageInputStreamSpi other = others.next();
+            if (other != this && File.class.equals(other.getInputClass())) {
+                // "this before other" — our SPI takes priority
+                registry.setOrdering(
+                        (Class<ImageInputStreamSpi>) category, this, other);
+            }
+        }
     }
 
     @Override

@@ -2,16 +2,21 @@ package io.github.ghosthack.imageio.apple;
 
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
+import java.io.IOException;
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
 
 /**
  * Public helper that converts a CGImageRef to a {@link BufferedImage}.
  * <p>
- * This class loads its own CoreGraphics downcall handles from the frameworks
- * that are already loaded by {@link AppleNative}'s static initialiser.
- * It is intended to be used by the video-apple module which lives in a
- * different package and therefore cannot access package-private members.
+ * Loads CoreFoundation and CoreGraphics frameworks defensively in its own
+ * static initialiser, so it works regardless of whether {@link AppleNative}
+ * has been class-loaded first. The {@code System.load} calls are idempotent —
+ * if the frameworks are already loaded, they are a no-op.
+ * <p>
+ * Intended to be used by both {@link AppleNative} (for still-image decode)
+ * and the video-apple module (which lives in a different package and cannot
+ * access package-private members).
  * <p>
  * Requires macOS and {@code --enable-native-access=ALL-UNNAMED}.
  */
@@ -50,9 +55,16 @@ public final class AppleCoreGraphicsHelper {
     private static final MethodHandle CGContextDrawImage;
     private static final MethodHandle CFRelease;
 
+    private static final boolean IS_MACOS = System.getProperty("os.name", "")
+            .toLowerCase(java.util.Locale.ROOT).contains("mac");
+
     static {
-        // AppleNative's static init has already loaded CoreFoundation and CoreGraphics
-        // via System.load, so the symbols are available in the loader lookup.
+        // Load CoreFoundation and CoreGraphics defensively.  System.load is
+        // idempotent — if AppleNative already loaded them, these are no-ops.
+        if (IS_MACOS) {
+            System.load("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation");
+            System.load("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
+        }
         LOOKUP = SymbolLookup.loaderLookup();
 
         CGImageGetWidth = downcall("CGImageGetWidth",
@@ -98,7 +110,7 @@ public final class AppleCoreGraphicsHelper {
      * @throws IOException if the conversion fails
      */
     public static BufferedImage cgImageToBufferedImage(MemorySegment cgImage, Arena arena)
-            throws java.io.IOException {
+            throws IOException {
         MemorySegment colorSpace = MemorySegment.NULL;
         MemorySegment ctx = MemorySegment.NULL;
         try {
@@ -134,7 +146,7 @@ public final class AppleCoreGraphicsHelper {
             MemorySegment.copy(pixelData, ValueLayout.JAVA_INT, 0, dest, 0, dest.length);
 
             return result;
-        } catch (java.io.IOException e) {
+        } catch (IOException e) {
             throw e;
         } catch (Throwable t) {
             throw new javax.imageio.IIOException("CGImage to BufferedImage conversion failed", t);

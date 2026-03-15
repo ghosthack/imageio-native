@@ -373,7 +373,12 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
                 if (durationTimescale <= 0) {
                     duration = Duration.ZERO;
                 } else {
-                    long totalMillis = (durationValue * 1000L) / durationTimescale;
+                    // Convert CMTime to milliseconds without overflowing:
+                    // split into whole-seconds and remainder to keep intermediate
+                    // values within long range.
+                    long seconds = durationValue / durationTimescale;
+                    long remainder = durationValue % durationTimescale;
+                    long totalMillis = seconds * 1000L + (remainder * 1000L) / durationTimescale;
                     duration = Duration.ofMillis(totalMillis);
                 }
 

@@ -50,9 +50,25 @@ public class VideoFrameReaderSpi extends ImageReaderSpi {
         );
     }
 
+    /**
+     * Returns {@code true} if the source is a video container that this
+     * reader can actually serve.
+     * <p>
+     * Three conditions must hold:
+     * <ol>
+     *   <li>The source is a {@link PathAwareImageInputStream} — the reader
+     *       needs the file path for the native extraction APIs.  A plain
+     *       {@code ImageInputStream} will fail at read time.</li>
+     *   <li>A platform video backend is available (checked via
+     *       {@link VideoFrameExtractor#isAvailable()}).</li>
+     *   <li>The stream header matches a known video container format
+     *       (checked via {@link VideoFormatDetector#isVideoFormat}).</li>
+     * </ol>
+     */
     @Override
     public boolean canDecodeInput(Object source) throws IOException {
-        if (!(source instanceof ImageInputStream stream)) return false;
+        // Must be PathAwareImageInputStream so the reader can recover the file path
+        if (!(source instanceof PathAwareImageInputStream stream)) return false;
         if (!VideoFrameExtractor.isAvailable()) return false;
         return VideoFormatDetector.isVideoFormat(stream);
     }

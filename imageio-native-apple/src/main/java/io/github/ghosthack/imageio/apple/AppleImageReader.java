@@ -27,4 +27,14 @@ public class AppleImageReader extends NativeImageReader {
     protected BufferedImage nativeDecode(byte[] data) throws IOException {
         return AppleNative.decode(data);
     }
+
+    @Override
+    protected int[] nativeGetSizeFromPath(String path) throws IOException {
+        return AppleNative.getSizeFromPath(path);
+    }
+
+    @Override
+    protected BufferedImage nativeDecodeFromPath(String path) throws IOException {
+        return AppleNative.decodeFromPath(path);
+    }
 }
