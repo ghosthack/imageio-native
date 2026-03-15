@@ -111,6 +111,50 @@ Class.forName("io.github.ghosthack.imageio.apple.AppleImageReaderSpi");
 Class.forName("io.github.ghosthack.imageio.windows.WicImageReaderSpi");
 ```
 
+## Optional backends
+
+The `imageio-native-vips` module is an optional backend that delegates to [libvips](https://www.libvips.org/) for image decoding. It is **not** included in the `imageio-native` aggregator -- add it explicitly to opt in.
+
+```xml
+<dependency>
+    <groupId>io.github.ghosthack</groupId>
+    <artifactId>imageio-native-vips</artifactId>
+    <version>1.0.2</version>
+</dependency>
+```
+
+Requires libvips installed on the system:
+
+```sh
+# macOS (MacPorts)
+sudo port install vips
+
+# macOS (Homebrew)
+brew install vips
+
+# Debian/Ubuntu
+sudo apt install libvips-dev
+```
+
+The vips backend adds cross-platform support (macOS, Linux, Windows) for HEIC, AVIF, WebP, JPEG 2000, PDF, SVG, EXR, FITS, Netpbm, HDR, and more -- depending on the libvips build configuration. It respects the `imageio.native.formats` property (supplemental mode by default).
+
+The SPI declares a fixed set of common formats. Formats not in the list but supported by the installed libvips can still be decoded via the direct `VipsNative` API -- they just won't be auto-discovered by `ImageIO.read()`.
+
+### Backend priority
+
+When multiple backends are on the classpath (e.g. platform-native + vips), the consumer controls which backend handles each format via system properties:
+
+```
+# Global ordering (left = highest priority). Default: native,vips,magick
+-Dimageio.native.backend.priority=native,vips,magick
+
+# Per-format override
+-Dimageio.native.backend.priority.jpeg=vips,native
+-Dimageio.native.backend.priority.tiff=vips
+```
+
+With no properties set, the default ordering is: platform-native first, then vips. This means existing users see no change when adding `imageio-native-vips` to the classpath -- it only activates for formats the platform-native backend can't handle.
+
 ## Video poster frames
 
 The optional `imageio-native-video` module extracts a **single still image** from a video file -- the same way the image modules decode a still image from a HEIC or WebP file. The output is always a `BufferedImage`; no video playback, no audio, no frame sequences.
@@ -221,6 +265,7 @@ Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped fo
 ├── imageio-native-video-apple/      macOS video module (AVFoundation)
 ├── imageio-native-video-windows/    Windows video module (Media Foundation)
 ├── imageio-native-video/            cross-platform video aggregator
+├── imageio-native-vips/             optional libvips backend
 ├── scripts/                         test fixture generators
 └── example-consumer/                standalone demo (not in reactor)
 ```
