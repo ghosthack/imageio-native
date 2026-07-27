@@ -88,6 +88,20 @@
                     <configuration>
                         <release>26</release>
                     </configuration>
+                    <executions>
+                        <!--
+                            Downstream tests consume the shared test-fixture JARs.
+                            Test JARs are not JPMS modules, so keep test compilation
+                            on the class path while production compilation verifies
+                            every module descriptor on the module path.
+                        -->
+                        <execution>
+                            <id>default-testCompile</id>
+                            <configuration>
+                                <useModulePath>false</useModulePath>
+                            </configuration>
+                        </execution>
+                    </executions>
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
@@ -95,6 +109,7 @@
                     <version>3.5.5</version>
                     <configuration>
                         <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                        <useModulePath>false</useModulePath>
                     </configuration>
                 </plugin>
                 <plugin>

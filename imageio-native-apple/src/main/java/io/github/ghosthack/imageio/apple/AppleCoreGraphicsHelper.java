@@ -18,7 +18,9 @@ import java.lang.invoke.MethodHandle;
  * and the video-apple module (which lives in a different package and cannot
  * access package-private members).
  * <p>
- * Requires macOS and {@code --enable-native-access=ALL-UNNAMED}.
+ * Requires macOS and native access for the containing module
+ * ({@code io.github.ghosthack.imageio.apple}), or {@code ALL-UNNAMED} when
+ * used on the class path.
  */
 public final class AppleCoreGraphicsHelper {
 
