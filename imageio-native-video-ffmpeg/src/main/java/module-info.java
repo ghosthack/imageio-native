@@ -1,5 +1,6 @@
 module io.github.ghosthack.imageio.video.ffmpeg {
     requires transitive io.github.ghosthack.imageio.video.common;
+    requires ffmpeg.ffm;
 
     exports io.github.ghosthack.imageio.video.ffmpeg;
 

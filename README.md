@@ -261,7 +261,7 @@ VideoInfo info = VideoFrameExtractor.getInfo(Path.of("clip.mp4"));
 |--------|----------|------------|------------|
 | `imageio-native-video-apple` | macOS | AVFoundation (AVAssetImageGenerator) | MP4, MOV, M4V, 3GP |
 | `imageio-native-video-windows` | Windows 10+ | Media Foundation (IMFSourceReader) | Media Foundation-supported containers |
-| `imageio-native-video-ffmpeg` | Any (optional) | FFmpeg libavformat/libavcodec | All FFmpeg-supported containers |
+| `imageio-native-video-ffmpeg` | macOS ARM64, Windows x64, Linux x64 (optional) | Bundled FFmpeg 8.1.2 via `ffmpeg-ffm` | All bundled FFmpeg-supported containers |
 
 The Windows still-image and video backends use the published
 [`panama-media`](https://github.com/ghosthack/panama-media) WIC and Media
@@ -270,7 +270,13 @@ media components installed in Windows.
 
 ### FFmpeg video backend
 
-The `imageio-native-video-ffmpeg` module is an optional cross-platform video backend. It works on any OS where FFmpeg libraries are installed, including **Linux** (the only video backend available on Linux).
+The `imageio-native-video-ffmpeg` module is an optional, self-contained
+cross-platform video backend. It uses the published
+[`ffmpeg-ffm`](https://github.com/ghosthack/ffmpeg-ffm) jextract bindings and
+matching FFmpeg 8.1.2 native libraries. The appropriate native classifier is
+selected automatically for macOS ARM64, Windows x64, and Linux x64; users do
+not need to install FFmpeg separately. It is the only video backend available
+on Linux.
 
 ```xml
 <dependency>
@@ -280,18 +286,11 @@ The `imageio-native-video-ffmpeg` module is an optional cross-platform video bac
 </dependency>
 ```
 
-```sh
-# macOS (MacPorts)
-sudo port install ffmpeg
-
-# macOS (Homebrew)
-brew install ffmpeg
-
-# Debian/Ubuntu
-sudo apt install libavformat-dev libavcodec-dev libswscale-dev libavutil-dev
-```
-
-Struct offsets are version-specific. Currently supports FFmpeg 4.x (libavcodec major 58). The backend detects the FFmpeg version at runtime via `avcodec_version()` and disables itself if the version is not recognized. Additional version support can be added by providing offset tables.
+The native libraries are LGPL-only builds and are extracted to the
+`ffmpeg-ffm` cache on first use. For LGPL relinking or a custom deployment,
+override the bundled libraries with `-Dffmpegffm.libdir=/path/to/libs` or the
+`FFMPEG_FFM_LIBDIR` environment variable. An override must provide an
+ABI-compatible FFmpeg 8.x build (`libavformat` major 62).
 
 ## Architecture
 

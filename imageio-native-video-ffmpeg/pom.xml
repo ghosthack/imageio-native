@@ -15,11 +15,11 @@
 
     <name>imageio-native-video-ffmpeg</name>
     <description>
-        Optional video poster frame extraction backed by FFmpeg (libavformat,
-        libavcodec, libswscale) via Project Panama. Adds cross-platform video
-        support including Linux. Requires FFmpeg libraries installed on the
-        system. Not included in the imageio-native-video aggregator — add this
-        dependency explicitly to opt in.
+        Optional video poster frame extraction backed by the ffmpeg-ffm Panama
+        bindings and matching bundled FFmpeg native libraries. Adds
+        cross-platform video support including Linux. Not included in the
+        imageio-native-video aggregator — add this dependency explicitly to
+        opt in.
     </description>
 
     <dependencies>
@@ -27,6 +27,11 @@
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native-video-common</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
+            <artifactId>ffmpeg-ffm</artifactId>
+            <version>${ffmpeg-ffm.version}</version>
         </dependency>
         <dependency>
             <groupId>io.github.ghosthack</groupId>
@@ -58,4 +63,62 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>ffmpeg-natives-macos-arm64</id>
+            <activation>
+                <os>
+                    <family>mac</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.github.ghosthack</groupId>
+                    <artifactId>ffmpeg-ffm-natives</artifactId>
+                    <version>${ffmpeg-ffm.version}</version>
+                    <classifier>macos-arm64</classifier>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>ffmpeg-natives-windows-x64</id>
+            <activation>
+                <os>
+                    <family>windows</family>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.github.ghosthack</groupId>
+                    <artifactId>ffmpeg-ffm-natives</artifactId>
+                    <version>${ffmpeg-ffm.version}</version>
+                    <classifier>windows-x64</classifier>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>ffmpeg-natives-linux-x64</id>
+            <activation>
+                <os>
+                    <family>unix</family>
+                    <name>linux</name>
+                    <arch>amd64</arch>
+                </os>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.github.ghosthack</groupId>
+                    <artifactId>ffmpeg-ffm-natives</artifactId>
+                    <version>${ffmpeg-ffm.version}</version>
+                    <classifier>linux-x64</classifier>
+                    <scope>runtime</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

@@ -16,14 +16,14 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 /**
  * Tests for the FFmpeg video backend.
  * Uses the video test fixtures from imageio-native-video-common's test-jar.
- * All tests are skipped if FFmpeg is not installed or the version is not supported.
+ * The supported platforms use the FFmpeg native libraries bundled by ffmpeg-ffm.
  */
 class FFmpegVideoFrameExtractorTest {
 
     private final FFmpegVideoFrameExtractor extractor = new FFmpegVideoFrameExtractor();
 
     private void assumeFFmpeg() {
-        assumeTrue(FFmpegNative.isAvailable(), "FFmpeg not available — skipping");
+        assumeTrue(extractor.isAvailable(), "FFmpeg not available — skipping");
     }
 
     private Path extractResource(String name) throws IOException {
@@ -39,8 +39,9 @@ class FFmpegVideoFrameExtractorTest {
     // ── isAvailable ─────────────────────────────────────────────────────
 
     @Test
-    void isAvailableWhenInstalled() {
-        System.out.println("FFmpegNative.isAvailable() = " + FFmpegNative.isAvailable());
+    void bundledFFmpegIsAvailable() {
+        assumeTrue(isBundledPlatform(), "No bundled FFmpeg for this platform");
+        assertTrue(extractor.isAvailable(), "Bundled FFmpeg should be available");
     }
 
     // ── getInfo ─────────────────────────────────────────────────────────
@@ -69,6 +70,7 @@ class FFmpegVideoFrameExtractorTest {
         assertEquals(16, frame.getWidth());
         assertEquals(16, frame.getHeight());
         assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, frame.getType());
+        assertDominantColor(frame, 0, "red");
     }
 
     @Test
@@ -79,6 +81,7 @@ class FFmpegVideoFrameExtractorTest {
         assertNotNull(frame);
         assertEquals(16, frame.getWidth());
         assertEquals(16, frame.getHeight());
+        assertDominantColor(frame, 1, "green");
     }
 
     @Test
@@ -111,5 +114,24 @@ class FFmpegVideoFrameExtractorTest {
         assertEquals(16, info.width());
         assertEquals(16, info.height());
         assertEquals("h264", info.codec());
+    }
+
+    private static void assertDominantColor(BufferedImage frame, int channel, String name) {
+        int argb = frame.getRGB(frame.getWidth() / 2, frame.getHeight() / 2);
+        int[] channels = {(argb >>> 16) & 0xFF, (argb >>> 8) & 0xFF, argb & 0xFF};
+        assertTrue(channels[channel] > 200,
+                "Expected dominant " + name + " channel but got 0x" + Integer.toHexString(argb));
+        assertTrue(channels[(channel + 1) % 3] < 80);
+        assertTrue(channels[(channel + 2) % 3] < 80);
+    }
+
+    private static boolean isBundledPlatform() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        String arch = System.getProperty("os.arch", "").toLowerCase();
+        boolean x64 = arch.equals("amd64") || arch.equals("x86_64");
+        boolean arm64 = arch.equals("aarch64") || arch.equals("arm64");
+        return (os.contains("mac") && arm64)
+                || (os.contains("win") && x64)
+                || (os.contains("linux") && x64);
     }
 }

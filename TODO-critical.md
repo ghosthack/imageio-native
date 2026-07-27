@@ -16,8 +16,6 @@ Current after the Java 26 / imageio-native 2.0.0 migration.
   `panama-media`. Version 0.1.0 can return a padded 192x96 RGB32 canvas for a
   16x16 source, so `WindowsVideoFrameExtractor` currently queries metadata and
   crops it. Fixing this upstream would avoid opening the source twice per frame.
-- Extend the optional FFmpeg backend beyond its current version-specific ABI
-  table.
 
 The completed WIC, Media Foundation, libvips, ImageMagick, and FFmpeg
 implementation plans were removed when this list was refreshed.
