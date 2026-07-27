@@ -144,10 +144,6 @@ public final class FormatDetector {
         if (containsAscii(h, len, "<svg"))
             return "svg";
 
-        // WBMP has no strong magic. Keep the existing conservative check.
-        if (len >= 4 && h[0] == 0 && h[1] == 0 && h[2] != 0
-                && !(h[2] == 1 && h[3] == 0) && !(h[2] == 2 && h[3] == 0))
-            return "wbmp";
         return null;
     }
 

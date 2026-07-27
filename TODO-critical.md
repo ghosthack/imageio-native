@@ -4,8 +4,6 @@ Current after the Java 26 / imageio-native 2.0.0 migration.
 
 ## Correctness
 
-- Tighten the WBMP heuristic in `FormatDetector.isJavaNativeFormat()` so an
-  unrelated `00 00 ...` header cannot be mistaken for WBMP.
 - Make each video SPI probe backend/container capability, not just container
   magic. The formats advertised by a platform backend are not necessarily all
   decodable on every machine.

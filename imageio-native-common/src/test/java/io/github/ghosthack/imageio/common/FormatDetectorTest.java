@@ -30,6 +30,14 @@ class FormatDetectorTest {
         assertNull(FormatDetector.detectFormat(ftyp("isom"), 20));
     }
 
+    @Test
+    void wbmpDoesNotParticipateInPrefixBasedRouting() {
+        assertNull(FormatDetector.detectFormat(
+                new byte[]{0, 0, 1, 1, 0}, 5));
+        assertNull(FormatDetector.detectFormat(
+                new byte[]{0, 0, 3, 0}, 4));
+    }
+
     private static byte[] ftyp(String brand) {
         byte[] header = new byte[20];
         ByteBuffer.wrap(header).putInt(0, 20);
