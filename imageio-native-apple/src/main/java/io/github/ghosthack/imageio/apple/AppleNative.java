@@ -15,7 +15,9 @@ import java.lang.invoke.MethodHandle;
  * {@code kCGImageSourceCreateThumbnailWithTransform = true}, and {@link #getSize}
  * reads the orientation property to return display-oriented dimensions.
  * <p>
- * Requires {@code --enable-native-access=ALL-UNNAMED} at runtime.
+ * Requires native access for the containing module
+ * ({@code io.github.ghosthack.imageio.apple}), or {@code ALL-UNNAMED} when
+ * used on the class path.
  * Only functional on macOS; all entry points return failure gracefully on other OSes.
  */
 final class AppleNative {

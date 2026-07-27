@@ -10,7 +10,7 @@ Decode only. Still images only (video files yield a single poster frame). All mo
 
 ## Quick start
 
-Add the dependency and the JVM flag:
+Add the dependency:
 
 ```xml
 <dependency>
@@ -20,7 +20,9 @@ Add the dependency and the JVM flag:
 </dependency>
 ```
 
-```
+For a class-path application, grant native access to the unnamed module:
+
+```text
 --enable-native-access=ALL-UNNAMED
 ```
 
@@ -44,6 +46,43 @@ implementation("io.github.ghosthack:imageio-native:2.0.0")
 ```
 
 </details>
+
+### JPMS module path
+
+Every artifact is an explicit JPMS module. A modular application can require
+the cross-platform aggregators:
+
+```java
+module com.example.app {
+    requires io.github.ghosthack.imageio;
+    requires io.github.ghosthack.imageio.video;
+}
+```
+
+Native access can then be granted only to the backend modules used on the host,
+rather than to every class-path dependency:
+
+| Backend | `--enable-native-access` value |
+|---|---|
+| Apple images | `io.github.ghosthack.imageio.apple` |
+| Apple video | `io.github.ghosthack.imageio.apple,io.github.ghosthack.imageio.video.apple` |
+| Windows images | `io.github.ghosthack.panama.media.core,io.github.ghosthack.panama.media.comruntime,io.github.ghosthack.panama.media.wic` |
+| Windows video | `io.github.ghosthack.panama.media.core,io.github.ghosthack.panama.media.comruntime,io.github.ghosthack.panama.media.mediafoundation` |
+| libvips | `io.github.ghosthack.imageio.vips` |
+| ImageMagick | `io.github.ghosthack.imageio.magick` |
+| FFmpeg | `io.github.ghosthack.imageio.video.ffmpeg` |
+
+For example, a modular macOS image application can launch with:
+
+```sh
+java --enable-native-access=io.github.ghosthack.imageio.apple \
+     --module-path lib \
+     --module com.example.app/com.example.Main
+```
+
+The existing `META-INF/services` registrations remain in the JARs for
+class-path compatibility; equivalent `uses` and `provides` declarations enable
+the same ImageIO and backend discovery on the module path.
 
 ## Routing
 
