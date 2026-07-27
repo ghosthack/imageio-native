@@ -18,8 +18,6 @@ final class FormatRegistry {
 
     private FormatRegistry() {}
 
-    static final String PROPERTY = io.github.ghosthack.imageio.common.FormatRegistry.PROPERTY;
-
     private static final List<Format> ALL_FORMATS = List.of(
         // ── Java-native formats ─────────────────────────────────────────
         new Format(a("JPEG","jpeg","JPG","jpg"),  a("jpg","jpeg","jpe","jfif"), a("image/jpeg"),                     true),

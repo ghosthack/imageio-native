@@ -56,23 +56,14 @@ public final class ImageioNative {
         return false;
     }
 
-    /**
-     * Returns the set of format names currently active on this platform,
-     * as controlled by the {@code imageio.native.formats} system property.
-     *
-     * @return unmodifiable set of format names (e.g. "HEIC", "AVIF", "WEBP")
-     */
+    /** Returns all format names declared by the current platform backend. */
     public static Set<String> activeFormats() {
         if (AppleImageio.isAvailable()) return AppleImageio.activeFormats();
         if (WindowsImageio.isAvailable()) return WindowsImageio.activeFormats();
         return Set.of();
     }
 
-    /**
-     * Returns the set of file suffixes currently active on this platform.
-     *
-     * @return unmodifiable set of suffixes (e.g. "heic", "avif", "webp", "jp2")
-     */
+    /** Returns all file suffixes declared by the current platform backend. */
     public static Set<String> activeSuffixes() {
         if (AppleImageio.isAvailable()) return AppleImageio.activeSuffixes();
         if (WindowsImageio.isAvailable()) return WindowsImageio.activeSuffixes();

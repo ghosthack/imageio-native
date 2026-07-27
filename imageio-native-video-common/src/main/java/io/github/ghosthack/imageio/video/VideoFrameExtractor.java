@@ -1,15 +1,11 @@
 package io.github.ghosthack.imageio.video;
 
-import io.github.ghosthack.imageio.common.BackendPriority;
-
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
-import java.util.ServiceLoader;
 
 /**
  * Extracts still images from video files using platform-native media APIs.
@@ -41,60 +37,13 @@ public final class VideoFrameExtractor {
 
     private VideoFrameExtractor() {}
 
-    // ── Platform backend discovery ──────────────────────────────────────
-
-    /** Cached provider; {@code null} until first lookup. */
-    private static volatile VideoFrameExtractorProvider provider;
-
-    /** Sentinel indicating that discovery ran but found no backend. */
-    private static volatile boolean discoveryDone;
-
-    /**
-     * Discovers and returns the highest-priority available provider, or
-     * {@code null} if none is available.
-     * <p>
-     * Collects all available providers via {@link ServiceLoader}, sorts them
-     * by {@link BackendPriority}, and caches the winner.
-     */
-    private static VideoFrameExtractorProvider providerOrNull() {
-        VideoFrameExtractorProvider p = provider;
-        if (p != null) return p;
-        if (discoveryDone) return null;
-        synchronized (VideoFrameExtractor.class) {
-            if (provider != null) return provider;
-            if (discoveryDone) return null;
-
-            // Collect all available providers
-            List<VideoFrameExtractorProvider> available = new ArrayList<>();
-            for (VideoFrameExtractorProvider spi :
-                    ServiceLoader.load(VideoFrameExtractorProvider.class)) {
-                if (spi.isAvailable()) {
-                    available.add(spi);
-                }
-            }
-
-            if (!available.isEmpty()) {
-                // Sort by BackendPriority (lowest priority number = highest priority)
-                available.sort(Comparator.comparingInt(
-                        spi -> BackendPriority.priority(spi.backendName())));
-                provider = available.getFirst();
-                return provider;
-            }
-
-            discoveryDone = true;
-            return null;
-        }
-    }
-
-    /**
-     * Returns the platform provider, throwing if none is available.
-     */
-    private static VideoFrameExtractorProvider provider() {
-        VideoFrameExtractorProvider p = providerOrNull();
-        if (p == null)
+    private static VideoFrameExtractorProvider provider(Path videoFile) throws IOException {
+        VideoRouting.Decision decision = VideoRouting.select(videoFile);
+        if (decision == null) {
             throw new UnsupportedOperationException(
-                    "No video frame extraction backend for OS: " + System.getProperty("os.name"));
-        return p;
+                    "No capable video backend for: " + videoFile);
+        }
+        return decision.backend();
     }
 
     // ── Public API ──────────────────────────────────────────────────────
@@ -104,7 +53,8 @@ public final class VideoFrameExtractor {
      * for the current platform.
      */
     public static boolean isAvailable() {
-        return providerOrNull() != null;
+        return VideoRouting.discover().stream().anyMatch(
+                VideoFrameExtractorProvider::isAvailable);
     }
 
     /**
@@ -115,7 +65,7 @@ public final class VideoFrameExtractor {
      * @throws IOException if the file cannot be read or the format is unsupported
      */
     public static BufferedImage extractThumbnail(Path videoFile) throws IOException {
-        return provider().extractFrame(videoFile, Duration.ZERO);
+        return provider(videoFile).extractFrame(videoFile, Duration.ZERO);
     }
 
     /**
@@ -127,7 +77,7 @@ public final class VideoFrameExtractor {
      * @throws IOException if the file cannot be read or the format is unsupported
      */
     public static BufferedImage extractFrame(Path videoFile, Duration time) throws IOException {
-        return provider().extractFrame(videoFile, time);
+        return provider(videoFile).extractFrame(videoFile, time);
     }
 
     /**
@@ -140,12 +90,13 @@ public final class VideoFrameExtractor {
      */
     public static List<BufferedImage> extractFrames(Path videoFile, int count) throws IOException {
         if (count <= 0) throw new IllegalArgumentException("count must be > 0");
-        VideoInfo info = provider().getInfo(videoFile);
+        VideoFrameExtractorProvider provider = provider(videoFile);
+        VideoInfo info = provider.getInfo(videoFile);
         long totalMs = info.duration().toMillis();
         List<BufferedImage> frames = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             long ms = (count == 1) ? 0 : (totalMs * i) / (count - 1);
-            frames.add(provider().extractFrame(videoFile, Duration.ofMillis(ms)));
+            frames.add(provider.extractFrame(videoFile, Duration.ofMillis(ms)));
         }
         return frames;
     }
@@ -159,6 +110,6 @@ public final class VideoFrameExtractor {
      * @throws IOException if the file cannot be read or the format is unsupported
      */
     public static VideoInfo getInfo(Path videoFile) throws IOException {
-        return provider().getInfo(videoFile);
+        return provider(videoFile).getInfo(videoFile);
     }
 }

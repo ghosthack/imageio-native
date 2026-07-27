@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ghosthack/imageio-native/actions/workflows/ci.yml/badge.svg)](https://github.com/ghosthack/imageio-native/actions/workflows/ci.yml) [![Javadocs](https://javadoc.io/badge/io.github.ghosthack/imageio-native.svg)](https://javadoc.io/doc/io.github.ghosthack/imageio-native) [![Maven Central](https://img.shields.io/maven-central/v/io.github.ghosthack/imageio-native)](https://central.sonatype.com/artifact/io.github.ghosthack/imageio-native)
 
-Java ImageIO readers that delegate to **platform-native image decoding APIs** via [Project Panama](https://openjdk.org/jeps/454) (Foreign Function & Memory API, Java 22+).
+Java ImageIO readers that delegate to **platform-native image decoding APIs** via [Project Panama](https://openjdk.org/jeps/454) (Foreign Function & Memory API, Java 26+).
 
 Drop the JAR on your classpath and `ImageIO.read()` gains support for **HEIC, AVIF, WEBP, JPEG 2000, JPEG XL, camera RAW, PSD, EXR**, and more. No JNI, no native builds, no manual SPI wiring.
 
@@ -16,7 +16,7 @@ Add the dependency and the JVM flag:
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native</artifactId>
-    <version>1.0.2</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -40,12 +40,12 @@ The `imageio-native` aggregator pulls in both platform modules and auto-selects 
 <summary>Gradle</summary>
 
 ```kotlin
-implementation("io.github.ghosthack:imageio-native:1.0.2")
+implementation("io.github.ghosthack:imageio-native:2.0.0")
 ```
 
 </details>
 
-## Format configuration
+## Routing
 
 This implementation has modules for two native APIs:
 
@@ -54,16 +54,34 @@ This implementation has modules for two native APIs:
 | `imageio-native-apple` | macOS | CGImageSource (Apple ImageIO framework) | 60+ |
 | `imageio-native-windows` | Windows 10+ | Windows Imaging Component (WIC) | 30+ |
 
-Controlled by the system property `imageio.native.formats`:
+The host JDK is unchanged when no added backend can decode an input. Installing
+a backend opts into every format that backend declares and can actually decode,
+including intersections such as JPEG and PNG. A single capable backend therefore
+owns the input ahead of the JDK reader.
 
-| Value | Behaviour |
-|-------|-----------|
-| `supplemental` (default) | Only formats Java can't decode natively. JPEG/PNG/GIF/BMP/TIFF are left to Java's built-in readers. |
-| `all` | Every format the platform can decode, including JPEG/PNG/GIF/BMP/TIFF. |
-| `none` | Disabled entirely. |
-| comma-separated list | Explicit whitelist, e.g. `heic,avif,webp,jp2`. |
+When multiple added backends can decode the same input, portable/software
+backends win by default over platform-native backends; stable backend IDs break
+ties. Applications can own intersection choices explicitly during startup:
 
-### Supported formats (supplemental defaults)
+```java
+import io.github.ghosthack.imageio.common.ImageIoRouting;
+
+ImageIoRouting.configure(routes -> routes
+        .prefer("jpeg", "windows")
+        .prefer("heic", "windows")
+        .prefer("mkv", "ffmpeg")
+        .preferHost("png"));
+```
+
+Valid backend IDs are `apple`, `windows`, `vips`, `magick`, and `ffmpeg` when
+the corresponding module is installed. Configuration freezes on the first
+routed operation. A selected decoder is invoked once; decode failure is returned
+to the caller without retrying another backend. Direct backend APIs bypass the
+router.
+
+See [ROUTING.md](ROUTING.md) for the complete ownership contract.
+
+### Supported formats
 
 **Both platforms:** HEIC, HEIF, AVIF, WebP, DNG, CR2, CR3, NEF, ARW, ICO, CUR, DDS, and many more camera RAW formats
 
@@ -101,14 +119,14 @@ try {
 } catch (ClassNotFoundException ignored) { }
 ```
 
-To detect a specific platform module, check its SPI class:
+To detect a specific platform module, check its backend service class:
 
 ```java
 // macOS (imageio-native-apple)
-Class.forName("io.github.ghosthack.imageio.apple.AppleImageReaderSpi");
+Class.forName("io.github.ghosthack.imageio.apple.AppleImageBackend");
 
 // Windows (imageio-native-windows)
-Class.forName("io.github.ghosthack.imageio.windows.WicImageReaderSpi");
+Class.forName("io.github.ghosthack.imageio.windows.WindowsImageBackend");
 ```
 
 ## Optional backends
@@ -119,7 +137,7 @@ The `imageio-native-vips` module is an optional backend that delegates to [libvi
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-vips</artifactId>
-    <version>1.0.2</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -136,7 +154,7 @@ brew install vips
 sudo apt install libvips-dev
 ```
 
-The vips backend adds cross-platform support (macOS, Linux, Windows) for HEIC, AVIF, WebP, JPEG 2000, PDF, SVG, EXR, FITS, Netpbm, HDR, and more -- depending on the libvips build configuration. It respects the `imageio.native.formats` property (supplemental mode by default).
+The vips backend adds cross-platform support (macOS, Linux, Windows) for HEIC, AVIF, WebP, JPEG 2000, PDF, SVG, EXR, FITS, Netpbm, HDR, and more -- depending on the libvips build configuration.
 
 The SPI declares a fixed set of common formats. Formats not in the list but supported by the installed libvips can still be decoded via the direct `VipsNative` API -- they just won't be auto-discovered by `ImageIO.read()`.
 
@@ -148,7 +166,7 @@ The `imageio-native-magick` module is an optional backend that delegates to [Ima
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-magick</artifactId>
-    <version>1.0.2</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -165,21 +183,6 @@ brew install imagemagick
 sudo apt install libmagickwand-7-dev
 ```
 
-### Backend priority
-
-When multiple backends are on the classpath (e.g. platform-native + vips), the consumer controls which backend handles each format via system properties:
-
-```
-# Global ordering (left = highest priority). Default: native,vips,magick,ffmpeg
--Dimageio.native.backend.priority=native,vips,magick,ffmpeg
-
-# Per-format override
--Dimageio.native.backend.priority.jpeg=vips,native
--Dimageio.native.backend.priority.tiff=vips
-```
-
-With no properties set, the default ordering is: platform-native first, then vips, then magick, then ffmpeg. Existing users see no change when adding optional backends -- they only activate for formats the higher-priority backends can't handle.
-
 ## Video poster frames
 
 The optional `imageio-native-video` module extracts a **single still image** from a video file -- the same way the image modules decode a still image from a HEIC or WebP file. The output is always a `BufferedImage`; no video playback, no audio, no frame sequences.
@@ -190,7 +193,7 @@ This means `ImageIO.read(new File("clip.mp4"))` works exactly like `ImageIO.read
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-video</artifactId>
-    <version>1.0.2</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -218,10 +221,13 @@ VideoInfo info = VideoFrameExtractor.getInfo(Path.of("clip.mp4"));
 | Module | Platform | Native API | Containers |
 |--------|----------|------------|------------|
 | `imageio-native-video-apple` | macOS | AVFoundation (AVAssetImageGenerator) | MP4, MOV, M4V, 3GP |
-| `imageio-native-video-windows` | Windows 10+ | Media Foundation (IMFSourceReader) | *In progress* |
+| `imageio-native-video-windows` | Windows 10+ | Media Foundation (IMFSourceReader) | Media Foundation-supported containers |
 | `imageio-native-video-ffmpeg` | Any (optional) | FFmpeg libavformat/libavcodec | All FFmpeg-supported containers |
 
-The Windows video backend is not yet complete -- `isAvailable()` returns `false` until the implementation is finished. See `TODO-windows.md` for details.
+The Windows still-image and video backends use the published
+[`panama-media`](https://github.com/ghosthack/panama-media) WIC and Media
+Foundation bindings. Codec and container support ultimately depends on the
+media components installed in Windows.
 
 ### FFmpeg video backend
 
@@ -231,7 +237,7 @@ The `imageio-native-video-ffmpeg` module is an optional cross-platform video bac
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-video-ffmpeg</artifactId>
-    <version>1.0.2</version>
+    <version>2.0.0</version>
 </dependency>
 ```
 
@@ -254,18 +260,20 @@ Struct offsets are version-specific. Currently supports FFmpeg 4.x (libavcodec m
 ImageIO.read(file)
     │
     ▼
-ImageReaderSpi              one universal SPI per platform
-    │ canDecodeInput():
-    │   1. skip Java-native formats in "supplemental" mode
-    │   2. probe via native API (CGImageSource / WIC)
+RoutingImageReaderSpi       one SPI for all still-image backends
+    │
+    ├── detect format once
+    ├── discover installed backend services
+    ├── probe actual input capability
+    └── resolve exactly one owner
     ▼
-ImageReader                 lazy decode + cache
+Backend ImageReader         one decode attempt, lazy decode + cache
     │
     ▼
 ┌─────────────────────┬──────────────────────────────┐
 │ macOS               │ Windows                      │
-│ AppleNative         │ WicNative                    │
-│ Panama downcalls    │ Panama COM vtable dispatch   │
+│ AppleNative         │ panama-media WIC             │
+│ Panama downcalls    │ shared COM/FFM bindings      │
 │ CoreGraphics +      │ ole32 + windowscodecs        │
 │   ImageIO.framework │ IWICImagingFactory →         │
 │ CGImageSource →     │   IWICStream → Decoder →     │
@@ -279,7 +287,11 @@ BufferedImage (TYPE_INT_ARGB_PRE)
 
 Both platforms output BGRA premultiplied pixels that map directly to `TYPE_INT_ARGB_PRE` when read as little-endian ints — zero pixel conversion overhead.
 
-One universal SPI per platform means `canDecodeInput` delegates to the native API to probe headers, so any format the OS adds in a future update works automatically. Both modules compile on all OSes; native loading is guarded by OS checks.
+Backend modules register `ImageDecoderBackend` services rather than competing
+`ImageReaderSpi` implementations. The routing SPI declines inputs with no
+capable added backend, allowing the host ImageIO readers to proceed normally.
+Both platform modules compile on all operating systems; native loading remains
+guarded by availability checks.
 
 ## EXIF orientation
 
@@ -325,14 +337,14 @@ Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped fo
 
 ## Building
 
-Requires Java 22+ and Maven 3.9+.
+Requires Java 26+ and Maven 3.9+.
 
 ```sh
 mvn clean test                        # compile + test
 mvn install -DskipTests               # install to local repo
 mvn -f example-consumer/pom.xml test  # example-consumer
 
-swift scripts/generate-heic-avif-cgimage.swift   # HEIC + AVIF (macOS CGImage)
+swift scripts/generate-heic-avif-cgimage.swift   # HEIC + AVIF (macOS + heif-enc)
 ./scripts/generate-png-webp-chrome.sh            # PNG + WebP  (Chrome headless)
 python scripts/generate-all-pillow.py            # all formats (pip: pillow + plugins)
 swift scripts/generate-video-fixtures.swift      # video fixtures (macOS AVFoundation)

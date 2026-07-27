@@ -1,6 +1,7 @@
 package io.github.ghosthack.imageio.video.windows;
 
 import io.github.ghosthack.imageio.video.VideoInfo;
+import io.github.ghosthack.imageio.common.TestPixels;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
@@ -24,6 +25,10 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  */
 @EnabledOnOs(OS.WINDOWS)
 class WindowsVideoFrameExtractorTest {
+
+    private static final int RED = 0xFFFF0000;
+    private static final int GREEN = 0xFF00FF00;
+    private static final int TOLERANCE = 70;
 
     private static final Path TEST_VIDEO_MP4 = testResource("test-video-3s.mp4");
 
@@ -52,8 +57,7 @@ class WindowsVideoFrameExtractorTest {
 
     @Test
     void isAvailableOnWindows() {
-        // TODO: change to assertTrue once extractFrame is fully implemented
-        assertFalse(extractor.isAvailable());
+        assertTrue(extractor.isAvailable());
     }
 
     // ── extractFrame ────────────────────────────────────────────────────
@@ -63,8 +67,11 @@ class WindowsVideoFrameExtractorTest {
         assumeCanDecode();
         BufferedImage frame = extractor.extractFrame(TEST_VIDEO_MP4, Duration.ZERO);
         assertNotNull(frame, "Frame at t=0 should not be null");
-        assertTrue(frame.getWidth() > 0, "Width should be > 0");
-        assertTrue(frame.getHeight() > 0, "Height should be > 0");
+        assertEquals(16, frame.getWidth());
+        assertEquals(16, frame.getHeight());
+        assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, frame.getType());
+        TestPixels.assertColourClose(
+                "Red frame at t=0", RED, frame.getRGB(8, 8), TOLERANCE);
     }
 
     @Test
@@ -72,8 +79,10 @@ class WindowsVideoFrameExtractorTest {
         assumeCanDecode();
         BufferedImage frame = extractor.extractFrame(TEST_VIDEO_MP4, Duration.ofSeconds(1));
         assertNotNull(frame, "Frame at t=1s should not be null");
-        assertTrue(frame.getWidth() > 0, "Width should be > 0");
-        assertTrue(frame.getHeight() > 0, "Height should be > 0");
+        assertEquals(16, frame.getWidth());
+        assertEquals(16, frame.getHeight());
+        TestPixels.assertColourClose(
+                "Green frame at t=1s", GREEN, frame.getRGB(8, 8), TOLERANCE);
     }
 
     @Test
@@ -99,8 +108,11 @@ class WindowsVideoFrameExtractorTest {
         assumeCanDecode();
         VideoInfo info = extractor.getInfo(TEST_VIDEO_MP4);
         assertNotNull(info, "VideoInfo should not be null");
-        assertTrue(info.width() > 0, "Width should be > 0");
-        assertTrue(info.height() > 0, "Height should be > 0");
+        assertEquals(16, info.width());
+        assertEquals(16, info.height());
+        assertTrue(info.duration().toMillis() >= 2500);
+        assertTrue(info.duration().toMillis() <= 3500);
+        assertEquals("h264", info.codec());
     }
 
     @Test

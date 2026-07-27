@@ -4,9 +4,8 @@ package io.github.ghosthack.imageio.video;
  * Shared video format list for video {@link javax.imageio.spi.ImageReaderSpi}
  * implementations.
  * <p>
- * Unlike the image {@link io.github.ghosthack.imageio.common.FormatRegistry},
- * there is no supplemental-mode distinction — Java has no built-in video
- * readers, so all video formats are always active.
+ * Java has no built-in video readers, so every declared video format is a
+ * routing candidate when a capable backend is installed.
  */
 public final class VideoFormatRegistry {
 

@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.ghosthack</groupId>
         <artifactId>imageio-native-parent</artifactId>
-        <version>1.0.2</version>
+        <version>2.0.0</version>
     </parent>
 
     <artifactId>imageio-native-windows</artifactId>
@@ -25,6 +25,11 @@
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native-common</artifactId>
             <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
+            <artifactId>panama-media-wic</artifactId>
+            <version>${panama-media.version}</version>
         </dependency>
         <dependency>
             <groupId>io.github.ghosthack</groupId>

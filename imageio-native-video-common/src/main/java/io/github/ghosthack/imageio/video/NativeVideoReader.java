@@ -27,13 +27,17 @@ import java.util.List;
  */
 public class NativeVideoReader extends ImageReader {
 
-    private final VideoFrameExtractorProvider provider;
+    private VideoFrameExtractorProvider provider;
     private volatile VideoInfo cachedInfo;
 
     public NativeVideoReader(ImageReaderSpi originatingProvider,
                              VideoFrameExtractorProvider extractorProvider) {
         super(originatingProvider);
         this.provider = extractorProvider;
+    }
+
+    public NativeVideoReader(ImageReaderSpi originatingProvider) {
+        super(originatingProvider);
     }
 
     @Override
@@ -66,7 +70,7 @@ public class NativeVideoReader extends ImageReader {
         checkIndex(imageIndex);
         Path path = getFilePath();
         processImageStarted(imageIndex);
-        BufferedImage result = provider.extractFrame(path, Duration.ZERO);
+        BufferedImage result = provider().extractFrame(path, Duration.ZERO);
         processImageProgress(100.0f);
         processImageComplete();
         return result;
@@ -117,9 +121,19 @@ public class NativeVideoReader extends ImageReader {
     private VideoInfo ensureInfo() throws IOException {
         VideoInfo info = cachedInfo;
         if (info == null) {
-            info = provider.getInfo(getFilePath());
+            info = provider().getInfo(getFilePath());
             cachedInfo = info;
         }
         return info;
+    }
+
+    private VideoFrameExtractorProvider provider() throws IOException {
+        if (provider != null) return provider;
+        VideoRouting.Decision decision = VideoRouting.select(getFilePath());
+        if (decision == null) {
+            throw new IOException("No imageio-native video backend owns this input");
+        }
+        provider = decision.backend();
+        return provider;
     }
 }

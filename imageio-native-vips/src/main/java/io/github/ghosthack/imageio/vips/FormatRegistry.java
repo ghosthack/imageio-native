@@ -24,8 +24,6 @@ final class FormatRegistry {
 
     private FormatRegistry() {}
 
-    static final String PROPERTY = io.github.ghosthack.imageio.common.FormatRegistry.PROPERTY;
-
     // ── Format entries ──────────────────────────────────────────────────
 
     /** All known libvips-decodable formats with metadata. */

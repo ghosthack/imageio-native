@@ -1,5 +1,6 @@
 package io.github.ghosthack.imageio.apple;
 
+import io.github.ghosthack.imageio.common.RoutingImageReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -83,7 +84,7 @@ class AppleImageReaderTest {
     void readerLookupByMimeType(String mimeType) {
         Iterator<ImageReader> readers = ImageIO.getImageReadersByMIMEType(mimeType);
         assertTrue(readers.hasNext(), "No reader registered for MIME type: " + mimeType);
-        assertInstanceOf(AppleImageReader.class, readers.next());
+        assertInstanceOf(RoutingImageReader.class, readers.next());
     }
 
     // ── SPI lookup by suffix ────────────────────────────────────────────
@@ -93,31 +94,35 @@ class AppleImageReaderTest {
     void readerLookupBySuffix(String suffix) {
         Iterator<ImageReader> readers = ImageIO.getImageReadersBySuffix(suffix);
         assertTrue(readers.hasNext(), "No reader registered for suffix: " + suffix);
-        assertInstanceOf(AppleImageReader.class, readers.next());
+        assertInstanceOf(RoutingImageReader.class, readers.next());
     }
 
-    // ── Extended format suffixes (supplemental defaults) ────────────────
+    // ── Extended format suffixes ────────────────────────────────────────
 
-    @ParameterizedTest(name = "supplemental suffix registered: {0}")
+    @ParameterizedTest(name = "backend suffix registered: {0}")
     @ValueSource(strings = {"jp2", "psd", "dng", "cr2", "nef", "arw", "exr", "ico", "tga", "jxl"})
-    void supplementalSuffixRegistered(String suffix) {
+    void backendSuffixRegistered(String suffix) {
         Iterator<ImageReader> readers = ImageIO.getImageReadersBySuffix(suffix);
-        assertTrue(readers.hasNext(), "No reader registered for supplemental suffix: " + suffix);
-        assertInstanceOf(AppleImageReader.class, readers.next());
+        assertTrue(readers.hasNext(), "No routing reader registered for suffix: " + suffix);
+        assertInstanceOf(RoutingImageReader.class, readers.next());
     }
 
-    // ── Supplemental mode should NOT claim Java-native formats ──────────
+    // ── Installed backend overrides the host on intersections ───────────
 
     @Test
-    void pngReadDoesNotUseAppleReader() throws IOException {
-        // In default "supplemental" mode, PNG should fall through to Java's
-        // built-in PNGImageReader, not our AppleImageReader.
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png")) {
+    void pngInputUsesAppleReader() throws IOException {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png");
+             ImageInputStream iis = ImageIO.createImageInputStream(is)) {
             assertNotNull(is);
-            BufferedImage img = ImageIO.read(is);
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            assertTrue(readers.hasNext());
+            ImageReader reader = readers.next();
+            assertInstanceOf(AppleImageReader.class, reader);
+            reader.setInput(iis);
+            BufferedImage img = reader.read(0);
             assertNotNull(img, "PNG should still be readable");
             assertEquals(8, img.getWidth());
-            // We don't assert the reader class because Java's reader handles it
+            reader.dispose();
         }
     }
 

@@ -7,6 +7,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -29,12 +30,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * <p>
  * Codec-dependent tests are skipped when the required codec is not
  * installed (e.g. on CI runners without HEVC/AV1/WebP extensions).
- * <p>
- * Run with default (supplemental) mode:
- * <pre>mvn test</pre>
- * <p>
- * Run with all-formats mode (native backend decodes JPEG/PNG too):
- * <pre>mvn test -Dimageio.native.formats=all</pre>
  */
 class DecodeTest {
 
@@ -44,11 +39,11 @@ class DecodeTest {
                 resource + " codec not available — skipping");
     }
 
-    // ── Supplemental formats (SPI path) ─────────────────────────────────
+    // ── Backend formats (SPI path) ──────────────────────────────────────
 
     @ParameterizedTest(name = "decode {0}")
     @ValueSource(strings = {"test8x8.heic", "test8x8.avif", "test8x8.webp"})
-    void supplementalFormatsDecoded(String resource) throws IOException {
+    void backendFormatsDecoded(String resource) throws IOException {
         assumeCanDecode(resource);
         try (InputStream in = getClass().getClassLoader().getResourceAsStream(resource)) {
             assertNotNull(in, "fixture missing: " + resource);
@@ -62,7 +57,7 @@ class DecodeTest {
         }
     }
 
-    // ── PNG always readable (Java builtin or native in "all" mode) ──────
+    // ── PNG is owned by the installed capable backend ───────────────────
 
     @Test
     void pngAlwaysReadable() throws IOException {
@@ -74,23 +69,17 @@ class DecodeTest {
         }
     }
 
-    // ── In "all" mode, native SPI should claim PNG too ──────────────────
-
     @Test
-    void allModeClaimsPng() {
-        String mode = System.getProperty("imageio.native.formats", "supplemental");
-        if (!"all".equals(mode)) return; // only relevant in "all" mode
-
-        Iterator<ImageReader> readers = ImageIO.getImageReadersBySuffix("png");
-        boolean foundNative = false;
-        while (readers.hasNext()) {
-            ImageReader r = readers.next();
-            if (r.getClass().getName().contains("ghosthack")) {
-                foundNative = true;
-                break;
-            }
+    void installedBackendClaimsPng() throws IOException {
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream("test8x8.png");
+             ImageInputStream imageInput = ImageIO.createImageInputStream(in)) {
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInput);
+            assertTrue(readers.hasNext());
+            ImageReader reader = readers.next();
+            assertTrue(reader.getClass().getName().startsWith("io.github.ghosthack"),
+                    "The installed capable backend should own PNG");
+            reader.dispose();
         }
-        assertTrue(foundNative, "In 'all' mode, native SPI should claim PNG");
     }
 
     // ── Direct API: availability ────────────────────────────────────────
@@ -108,7 +97,7 @@ class DecodeTest {
         Set<String> formats = ImageioNative.activeFormats();
         assertNotNull(formats);
         assertFalse(formats.isEmpty());
-        // In supplemental mode, should contain HEIC/AVIF/WEBP
+        // The platform backend declares HEIC/AVIF/WebP candidates.
         assertTrue(formats.contains("HEIC") || formats.contains("heic"),
                 "Active formats should include HEIC");
     }
