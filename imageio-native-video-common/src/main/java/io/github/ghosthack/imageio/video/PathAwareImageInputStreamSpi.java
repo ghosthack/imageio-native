@@ -8,16 +8,19 @@ import java.io.IOException;
 import java.util.Locale;
 
 /**
- * Replaces the JDK's default {@code File → ImageInputStream} SPI so that
- * {@link javax.imageio.ImageIO#read(File)} produces a {@link PathAwareImageInputStream}
- * instead of a plain {@link javax.imageio.stream.FileImageInputStream}.
+ * Compatibility alias for the provider now registered by
+ * {@code imageio-native-common}.
  * <p>
  * This is transparent to all existing readers (since {@link PathAwareImageInputStream}
  * extends {@link javax.imageio.stream.FileImageInputStream}) but allows video-aware
  * readers to extract the file path via {@link PathAwareImageInputStream#getPath()}.
- * <p>
- * Registered via {@code META-INF/services/javax.imageio.spi.ImageInputStreamSpi}.
+ * <p>This alias is no longer service-registered; the shared provider is
+ * registered by {@code imageio-native-common}.</p>
+ *
+ * @deprecated use
+ * {@link io.github.ghosthack.imageio.common.PathAwareImageInputStreamSpi}
  */
+@Deprecated
 public class PathAwareImageInputStreamSpi extends ImageInputStreamSpi {
 
     public PathAwareImageInputStreamSpi() {

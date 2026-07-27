@@ -6,6 +6,8 @@ module io.github.ghosthack.imageio.common {
     uses io.github.ghosthack.imageio.common.ImageDecoderBackend;
     uses io.github.ghosthack.imageio.common.RoutingBackend;
 
+    provides javax.imageio.spi.ImageInputStreamSpi
+            with io.github.ghosthack.imageio.common.PathAwareImageInputStreamSpi;
     provides javax.imageio.spi.ImageReaderSpi
             with io.github.ghosthack.imageio.common.RoutingImageReaderSpi;
 }
