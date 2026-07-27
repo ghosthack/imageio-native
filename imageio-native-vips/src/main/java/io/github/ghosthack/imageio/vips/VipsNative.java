@@ -31,7 +31,7 @@ final class VipsNative {
     private static final int VIPS_INTERPRETATION_sRGB = 22;
     private static final int VIPS_ACCESS_SEQUENTIAL = 1;
 
-    /** Maximum total pixel count to prevent OOM (same as AppleNative/WicNative). */
+    /** Maximum total pixel count to prevent OOM (same as the platform-native backends). */
     private static final long MAX_PIXELS = 256L * 1024 * 1024;
 
     // ── Library loading ─────────────────────────────────────────────────

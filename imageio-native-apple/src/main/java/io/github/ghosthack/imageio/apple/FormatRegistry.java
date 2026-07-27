@@ -17,8 +17,6 @@ final class FormatRegistry {
 
     private FormatRegistry() {}
 
-    static final String PROPERTY = io.github.ghosthack.imageio.common.FormatRegistry.PROPERTY;
-
     // ── Format entries ──────────────────────────────────────────────────
 
     /** All known Apple ImageIO source formats with metadata. */
@@ -107,9 +105,9 @@ final class FormatRegistry {
 
     // ── Delegating queries ──────────────────────────────────────────────
 
-    static String[] activeFormatNames() { return INSTANCE.activeFormatNames(); }
-    static String[] activeSuffixes()    { return INSTANCE.activeSuffixes(); }
-    static String[] activeMimeTypes()   { return INSTANCE.activeMimeTypes(); }
+    static String[] activeFormatNames() { return INSTANCE.formatNames(); }
+    static String[] activeSuffixes()    { return INSTANCE.suffixes(); }
+    static String[] activeMimeTypes()   { return INSTANCE.mimeTypes(); }
 
     private static String[] a(String... s) { return s; }
 }

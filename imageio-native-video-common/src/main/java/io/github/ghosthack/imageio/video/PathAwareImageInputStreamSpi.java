@@ -32,7 +32,7 @@ public class PathAwareImageInputStreamSpi extends ImageInputStreamSpi {
      * Without explicit ordering, the JDK's SPI may win, which would
      * produce a plain {@code FileImageInputStream} instead of a
      * {@link PathAwareImageInputStream}, breaking
-     * {@link VideoFrameReader}'s ability to recover the file path.
+     * {@link NativeVideoReader}'s ability to recover the file path.
      */
     @Override
     @SuppressWarnings("unchecked")

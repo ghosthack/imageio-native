@@ -49,19 +49,10 @@ public final class AppleImageio {
     private static final Set<String> ACTIVE_FORMATS  = Set.of(FormatRegistry.activeFormatNames());
     private static final Set<String> ACTIVE_SUFFIXES = Set.of(FormatRegistry.activeSuffixes());
 
-    /**
-     * Returns the set of format names currently active, as controlled by
-     * the {@code imageio.native.formats} system property.
-     *
-     * @return unmodifiable set of lower-case format names (e.g. "heic", "avif", "webp")
-     */
+    /** Returns every format name declared by the installed Apple backend. */
     public static Set<String> activeFormats() { return ACTIVE_FORMATS; }
 
-    /**
-     * Returns the set of file suffixes currently active.
-     *
-     * @return unmodifiable set of lower-case suffixes (e.g. "heic", "avif", "webp", "jp2")
-     */
+    /** Returns every file suffix declared by the installed Apple backend. */
     public static Set<String> activeSuffixes() { return ACTIVE_SUFFIXES; }
 
     /**

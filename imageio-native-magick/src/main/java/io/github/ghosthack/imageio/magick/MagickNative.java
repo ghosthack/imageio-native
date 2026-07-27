@@ -58,7 +58,6 @@ final class MagickNative {
     private static final MethodHandle MagickExportImagePixels;
     private static final MethodHandle MagickGetException;
     private static final MethodHandle MagickRelinquishMemory;
-    private static final MethodHandle ClearMagickWand;
 
     static {
         boolean ok = false;
@@ -78,8 +77,6 @@ final class MagickNative {
                     FunctionDescriptor.of(ValueLayout.ADDRESS));
             DestroyMagickWand = downcall("DestroyMagickWand",
                     FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-            ClearMagickWand = downcall("ClearMagickWand",
-                    FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
             MagickReadImage = downcall("MagickReadImage",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT,
                             ValueLayout.ADDRESS, ValueLayout.ADDRESS));
@@ -120,7 +117,6 @@ final class MagickNative {
             MagickWandGenesis = null;
             NewMagickWand = null;
             DestroyMagickWand = null;
-            ClearMagickWand = null;
             MagickReadImage = null;
             MagickReadImageBlob = null;
             MagickPingImageBlob = null;
@@ -143,9 +139,9 @@ final class MagickNative {
     /**
      * Probes whether ImageMagick can decode data with the given header bytes.
      * <p>
-     * Uses {@code MagickPingImageBlob} first (lightweight, no pixel decode).
-     * Falls back to {@code MagickReadImageBlob} if ping fails — some
-     * ImageMagick delegates require a full read to identify the format.
+     * Uses {@code MagickPingImageBlob}, which reads metadata without decoding
+     * the pixel raster. A failed probe declines the input; routing never runs a
+     * speculative full decode or a decode-time fallback.
      */
     static boolean canDecode(byte[] header, int len) {
         if (!AVAILABLE) return false;
@@ -154,11 +150,6 @@ final class MagickNative {
             try {
                 MemorySegment buf = arena.allocateFrom(ValueLayout.JAVA_BYTE, header);
                 int rc = (int) MagickPingImageBlob.invokeExact(wand, buf, (long) len);
-                if (rc == MagickTrue) return true;
-
-                // Some delegates (HEIC, AVIF) need a full read to identify
-                ClearMagickWand.invokeExact(wand);
-                rc = (int) MagickReadImageBlob.invokeExact(wand, buf, (long) len);
                 return rc == MagickTrue;
             } finally {
                 destroyWand(wand);

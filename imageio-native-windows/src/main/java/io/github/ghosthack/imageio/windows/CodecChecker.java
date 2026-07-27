@@ -1,5 +1,7 @@
 package io.github.ghosthack.imageio.windows;
 
+import io.github.ghosthack.panama.media.wic.WIC;
+
 /**
  * Probes WIC for optional codec availability.
  * <p>
@@ -8,7 +10,7 @@ package io.github.ghosthack.imageio.windows;
  * <strong>AV1 Video Extensions</strong>, both from the Microsoft Store.
  * WebP is built-in on Windows 10 1809+.
  * <p>
- * This class uses {@link WicNative#canDecode(byte[], int)} with minimal header
+ * This class uses {@link WIC#canDecode(byte[], int)} with minimal header
  * blobs that are valid enough for WIC to attempt codec lookup, detecting
  * whether the required extensions are installed.
  */
@@ -44,9 +46,9 @@ final class CodecChecker {
     };
 
     // Codec installation status does not change during JVM lifetime — probe once.
-    private static final boolean HEIC = WicNative.canDecode(HEIF_PROBE, HEIF_PROBE.length);
-    private static final boolean AVIF = WicNative.canDecode(AVIF_PROBE, AVIF_PROBE.length);
-    private static final boolean WEBP = WicNative.canDecode(WEBP_PROBE, WEBP_PROBE.length);
+    private static final boolean HEIC = WIC.canDecode(HEIF_PROBE, HEIF_PROBE.length);
+    private static final boolean AVIF = WIC.canDecode(AVIF_PROBE, AVIF_PROBE.length);
+    private static final boolean WEBP = WIC.canDecode(WEBP_PROBE, WEBP_PROBE.length);
 
     /** Returns {@code true} if the HEVC Video Extensions are installed. */
     static boolean isHeicAvailable() { return HEIC; }

@@ -17,10 +17,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.release>22</maven.compiler.release>
-        <!-- Default: only supplemental formats (HEIC, AVIF, WEBP, JP2, RAW, …) -->
-        <!-- Override with -Dimageio.native.formats=all to use native decoder for JPEG/PNG/TIFF too -->
-        <imageio.native.formats>supplemental</imageio.native.formats>
+        <maven.compiler.release>26</maven.compiler.release>
     </properties>
 
     <dependencies>
@@ -30,19 +27,19 @@
         <dependency>
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native</artifactId>
-            <version>1.0.2</version>
+            <version>2.0.0</version>
         </dependency>
         <!-- Video poster frame extraction (optional — adds MP4/MOV support to ImageIO) -->
         <dependency>
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native-video</artifactId>
-            <version>1.0.2</version>
+            <version>2.0.0</version>
         </dependency>
         <!-- Shared test fixtures (test8x8.heic, .avif, .webp, .png) -->
         <dependency>
             <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native-common</artifactId>
-            <version>1.0.2</version>
+            <version>2.0.0</version>
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
@@ -61,7 +58,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <release>22</release>
+                    <release>26</release>
                 </configuration>
             </plugin>
             <plugin>
@@ -69,7 +66,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.3.1</version>
                 <configuration>
-                    <argLine>--enable-native-access=ALL-UNNAMED -Dimageio.native.formats=${imageio.native.formats}</argLine>
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
                 </configuration>
             </plugin>
             <plugin>

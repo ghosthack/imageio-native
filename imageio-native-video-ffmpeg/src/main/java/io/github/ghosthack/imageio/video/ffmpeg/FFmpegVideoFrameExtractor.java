@@ -1,5 +1,6 @@
 package io.github.ghosthack.imageio.video.ffmpeg;
 
+import io.github.ghosthack.imageio.common.RoutingBackend;
 import io.github.ghosthack.imageio.video.VideoFrameExtractorProvider;
 import io.github.ghosthack.imageio.video.VideoInfo;
 
@@ -45,8 +46,13 @@ public class FFmpegVideoFrameExtractor implements VideoFrameExtractorProvider {
     }
 
     @Override
-    public String backendName() {
+    public String id() {
         return "ffmpeg";
+    }
+
+    @Override
+    public Kind kind() {
+        return RoutingBackend.Kind.PORTABLE;
     }
 
     @Override

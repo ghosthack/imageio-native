@@ -1,6 +1,7 @@
 package io.github.ghosthack.imageio.video.apple;
 
 import io.github.ghosthack.imageio.apple.AppleCoreGraphicsHelper;
+import io.github.ghosthack.imageio.common.RoutingBackend;
 import io.github.ghosthack.imageio.video.VideoFrameExtractorProvider;
 import io.github.ghosthack.imageio.video.VideoInfo;
 
@@ -11,6 +12,7 @@ import java.lang.invoke.MethodHandle;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * macOS implementation of {@link VideoFrameExtractorProvider}.
@@ -20,6 +22,21 @@ import java.util.Locale;
  * BufferedImage using {@link AppleCoreGraphicsHelper}.
  */
 public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
+
+    @Override
+    public String id() {
+        return "apple";
+    }
+
+    @Override
+    public Kind kind() {
+        return RoutingBackend.Kind.PLATFORM_NATIVE;
+    }
+
+    @Override
+    public Set<String> formats() {
+        return Set.of("mp4", "mov", "m4v", "3gp");
+    }
 
     private static final boolean IS_MACOS = System.getProperty("os.name", "")
             .toLowerCase(Locale.ROOT).contains("mac");

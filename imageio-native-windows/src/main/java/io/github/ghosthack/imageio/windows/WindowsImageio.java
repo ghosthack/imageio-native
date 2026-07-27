@@ -1,8 +1,12 @@
 package io.github.ghosthack.imageio.windows;
 
+import io.github.ghosthack.panama.media.core.Dimensions;
+import io.github.ghosthack.panama.media.wic.WIC;
+
 import javax.imageio.IIOException;
 import java.awt.*;
 import java.awt.image.BufferedImage;
+import java.lang.foreign.Arena;
 import java.util.Set;
 
 /**
@@ -33,7 +37,7 @@ public final class WindowsImageio {
      * (i.e., the current OS is Windows).
      */
     public static boolean isAvailable() {
-        return WicNative.IS_WINDOWS;
+        return WIC.isAvailable();
     }
 
     /**
@@ -44,25 +48,16 @@ public final class WindowsImageio {
      * @return {@code true} if the format is recognised
      */
     public static boolean canDecode(byte[] header, int length) {
-        return WicNative.canDecode(header, length);
+        return WIC.canDecode(header, length);
     }
 
     private static final Set<String> ACTIVE_FORMATS  = Set.of(FormatRegistry.activeFormatNames());
     private static final Set<String> ACTIVE_SUFFIXES = Set.of(FormatRegistry.activeSuffixes());
 
-    /**
-     * Returns the set of format names currently active, as controlled by
-     * the {@code imageio.native.formats} system property.
-     *
-     * @return unmodifiable set of lower-case format names
-     */
+    /** Returns every format name declared by the installed Windows backend. */
     public static Set<String> activeFormats() { return ACTIVE_FORMATS; }
 
-    /**
-     * Returns the set of file suffixes currently active.
-     *
-     * @return unmodifiable set of lower-case suffixes
-     */
+    /** Returns every file suffix declared by the installed Windows backend. */
     public static Set<String> activeSuffixes() { return ACTIVE_SUFFIXES; }
 
     // ── Codec availability checks ───────────────────────────────────────
@@ -111,12 +106,10 @@ public final class WindowsImageio {
      */
     public static Dimension getSize(byte[] imageData) throws IIOException {
         try {
-            int[] wh = WicNative.getSize(imageData);
-            return new Dimension(wh[0], wh[1]);
-        } catch (IIOException e) {
-            throw e;
-        } catch (java.io.IOException e) {
-            throw new IIOException(e.getMessage(), e);
+            Dimensions size = WIC.getSize(imageData);
+            return new Dimension(size.width(), size.height());
+        } catch (RuntimeException e) {
+            throw PanamaMediaImages.decodeFailure("WIC size query failed", e);
         }
     }
 
@@ -132,12 +125,10 @@ public final class WindowsImageio {
      * @throws IIOException if the format is unsupported, decode fails, or OS is not Windows
      */
     public static BufferedImage decode(byte[] imageData) throws IIOException {
-        try {
-            return WicNative.decode(imageData);
-        } catch (IIOException e) {
-            throw e;
-        } catch (java.io.IOException e) {
-            throw new IIOException(e.getMessage(), e);
+        try (Arena arena = Arena.ofConfined()) {
+            return PanamaMediaImages.toBufferedImage(WIC.decode(arena, imageData));
+        } catch (RuntimeException e) {
+            throw PanamaMediaImages.decodeFailure("WIC image decode failed", e);
         }
     }
 }

@@ -1,5 +1,6 @@
 package io.github.ghosthack.imageio.windows;
 
+import io.github.ghosthack.imageio.common.RoutingImageReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -100,7 +101,7 @@ class WicImageReaderTest {
     void readerLookupByMimeType(String mimeType) {
         Iterator<ImageReader> readers = ImageIO.getImageReadersByMIMEType(mimeType);
         assertTrue(readers.hasNext(), "No reader registered for MIME type: " + mimeType);
-        assertInstanceOf(WicImageReader.class, readers.next());
+        assertInstanceOf(RoutingImageReader.class, readers.next());
     }
 
     // ── SPI lookup by suffix ────────────────────────────────────────────
@@ -110,28 +111,35 @@ class WicImageReaderTest {
     void readerLookupBySuffix(String suffix) {
         Iterator<ImageReader> readers = ImageIO.getImageReadersBySuffix(suffix);
         assertTrue(readers.hasNext(), "No reader registered for suffix: " + suffix);
-        assertInstanceOf(WicImageReader.class, readers.next());
+        assertInstanceOf(RoutingImageReader.class, readers.next());
     }
 
-    // ── WIC-specific format suffixes (supplemental defaults) ────────────
+    // ── WIC-specific format suffixes ────────────────────────────────────
 
-    @ParameterizedTest(name = "supplemental suffix registered: {0}")
+    @ParameterizedTest(name = "backend suffix registered: {0}")
     @ValueSource(strings = {"jxr", "wdp", "dds", "dng", "cr2", "nef", "arw", "ico"})
-    void supplementalSuffixRegistered(String suffix) {
+    void backendSuffixRegistered(String suffix) {
         Iterator<ImageReader> readers = ImageIO.getImageReadersBySuffix(suffix);
-        assertTrue(readers.hasNext(), "No reader registered for supplemental suffix: " + suffix);
-        assertInstanceOf(WicImageReader.class, readers.next());
+        assertTrue(readers.hasNext(), "No routing reader registered for suffix: " + suffix);
+        assertInstanceOf(RoutingImageReader.class, readers.next());
     }
 
-    // ── Supplemental mode should NOT claim Java-native formats ──────────
+    // ── Installed backend overrides the host on intersections ───────────
 
     @Test
-    void pngReadDoesNotUseWicReader() throws IOException {
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png")) {
+    void pngInputUsesWicReader() throws IOException {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png");
+             ImageInputStream iis = ImageIO.createImageInputStream(is)) {
             assertNotNull(is);
-            BufferedImage img = ImageIO.read(is);
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            assertTrue(readers.hasNext());
+            ImageReader reader = readers.next();
+            assertInstanceOf(WicImageReader.class, reader);
+            reader.setInput(iis);
+            BufferedImage img = reader.read(0);
             assertNotNull(img, "PNG should still be readable");
             assertEquals(8, img.getWidth());
+            reader.dispose();
         }
     }
 

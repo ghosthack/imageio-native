@@ -48,7 +48,7 @@ class AppleImageioTest {
     void activeFormatsContainsSupplementalFormat(String name) {
         Set<String> formats = AppleImageio.activeFormats();
         assertTrue(formats.contains(name),
-                "Active formats should contain '" + name + "' in supplemental mode");
+                "Declared formats should contain '" + name + "'");
     }
 
     @Test

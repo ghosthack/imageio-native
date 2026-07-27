@@ -50,7 +50,7 @@ class WindowsImageioTest {
     void activeFormatsContainsSupplementalFormat(String name) {
         Set<String> formats = WindowsImageio.activeFormats();
         assertTrue(formats.contains(name),
-                "Active formats should contain '" + name + "' in supplemental mode");
+                "Declared formats should contain '" + name + "'");
     }
 
     @Test

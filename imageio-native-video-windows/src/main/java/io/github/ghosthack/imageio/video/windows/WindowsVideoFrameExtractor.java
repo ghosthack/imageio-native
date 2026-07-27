@@ -1,9 +1,15 @@
 package io.github.ghosthack.imageio.video.windows;
 
+import io.github.ghosthack.imageio.common.RoutingBackend;
 import io.github.ghosthack.imageio.video.VideoFrameExtractorProvider;
 import io.github.ghosthack.imageio.video.VideoInfo;
+import io.github.ghosthack.panama.media.core.DecodedImage;
+import io.github.ghosthack.panama.media.core.PixelFormat;
+import io.github.ghosthack.panama.media.mediafoundation.MediaFoundation;
 
+import javax.imageio.IIOException;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
@@ -11,203 +17,138 @@ import java.lang.foreign.ValueLayout;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
- * Windows implementation of {@link VideoFrameExtractorProvider}.
- * <p>
- * Uses two native APIs:
- * <ul>
- *   <li><b>IShellItemImageFactory</b> — for quick thumbnail extraction (poster frame)</li>
- *   <li><b>IMFSourceReader</b> — for time-based frame extraction at arbitrary positions</li>
- * </ul>
- * Both are COM-based, using the same vtable dispatch pattern as the still-image WicNative backend.
+ * Windows video frame extraction backed by panama-media's Media Foundation
+ * implementation.
  */
 public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
 
-    private static final boolean IS_WINDOWS = System.getProperty("os.name", "")
-            .toLowerCase(Locale.ROOT).startsWith("win");
+    @Override
+    public String id() {
+        return "windows";
+    }
 
-    /**
-     * Returns {@code false} — the Windows video backend is not yet complete.
-     * <p>
-     * {@link #extractFrame} is still a stub (IMFSourceReader read-sample loop
-     * and pixel copy are not implemented).  Returning {@code false} prevents
-     * {@link io.github.ghosthack.imageio.video.VideoFrameExtractor} from
-     * selecting this provider via ServiceLoader.
-     */
+    @Override
+    public Kind kind() {
+        return RoutingBackend.Kind.PLATFORM_NATIVE;
+    }
+
     @Override
     public boolean isAvailable() {
-        // TODO: change to `return IS_WINDOWS;` once extractFrame is implemented
-        return false;
+        return MediaFoundation.isAvailable();
     }
 
     @Override
     public BufferedImage extractFrame(Path videoFile, Duration time) throws IOException {
-        if (!IS_WINDOWS) throw new UnsupportedOperationException("Requires Windows");
+        Objects.requireNonNull(videoFile, "videoFile");
+        Objects.requireNonNull(time, "time");
+        if (time.isNegative()) {
+            throw new IllegalArgumentException("time must not be negative");
+        }
+        if (!isAvailable()) {
+            throw new UnsupportedOperationException("Requires Windows Media Foundation");
+        }
 
         try (Arena arena = Arena.ofConfined()) {
-            int hrInit = WindowsVideoNative.comInit();
-            boolean weInitCom = (hrInit == WindowsVideoNative.S_OK);
-            try {
-                WindowsVideoNative.mfStartup();
-                try {
-                    // Create source reader from file path
-                    MemorySegment reader = MemorySegment.NULL;
-                    MemorySegment mediaType = MemorySegment.NULL;
-                    try {
-                        reader = WindowsVideoNative.createSourceReader(arena, videoFile.toString());
-
-                        // Create output media type requesting RGB32 uncompressed output
-                        mediaType = WindowsVideoNative.createMediaType(arena);
-
-                        // Set major type = Video
-                        int hr = (int) WindowsVideoNative.IMFMediaType_SetGUID.invokeExact(
-                                WindowsVideoNative.vtable(mediaType, 24),
-                                mediaType,
-                                WindowsVideoNative.MF_MT_MAJOR_TYPE,
-                                WindowsVideoNative.MFMediaType_Video);
-                        WindowsVideoNative.check(hr, "IMFMediaType::SetGUID(MF_MT_MAJOR_TYPE) failed");
-
-                        // Set subtype = RGB32
-                        hr = (int) WindowsVideoNative.IMFMediaType_SetGUID.invokeExact(
-                                WindowsVideoNative.vtable(mediaType, 24),
-                                mediaType,
-                                WindowsVideoNative.MF_MT_SUBTYPE,
-                                WindowsVideoNative.MFVideoFormat_RGB32);
-                        WindowsVideoNative.check(hr, "IMFMediaType::SetGUID(MF_MT_SUBTYPE) failed");
-
-                        // Set on the source reader for the first video stream
-                        hr = (int) WindowsVideoNative.IMFSourceReader_SetCurrentMediaType.invokeExact(
-                                WindowsVideoNative.vtable(reader, 7),
-                                reader,
-                                WindowsVideoNative.MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                                MemorySegment.NULL, // reserved
-                                mediaType);
-                        WindowsVideoNative.check(hr, "IMFSourceReader::SetCurrentMediaType failed");
-
-                        // TODO: If time > 0, seek via IMFSourceReader::SetCurrentPosition
-                        //   using a PROPVARIANT with VT_I8 containing 100-ns units
-                        //   PROPVARIANT pv; pv.vt = VT_I8; pv.hVal.QuadPart = time * 10_000_000;
-                        //   reader->SetCurrentPosition(GUID_NULL, pv);
-
-                        // TODO: ReadSample loop:
-                        //   hr = reader->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                        //       0, &actualIndex, &flags, &timestamp, &sample);
-                        //   if sample != NULL:
-                        //     sample->ConvertToContiguousBuffer(&buffer)
-                        //     buffer->Lock(&data, &maxLen, &curLen)
-                        //     // Copy RGB32 pixel data (bottom-up) to BufferedImage
-                        //     // Get dimensions from the actual output media type
-                        //     buffer->Unlock()
-
-                        // TODO: Create BufferedImage from RGB32/BGRA pixel data
-                        //   - RGB32 in MF is actually BGRX (B in low byte)
-                        //   - Bottom-up scanlines need flipping
-                        //   - Width/height from MF_MT_FRAME_SIZE on actual output type
-
-                        throw new UnsupportedOperationException(
-                                "IMFSourceReader frame extraction not yet tested on Windows");
-                    } finally {
-                        WindowsVideoNative.release(mediaType);
-                        WindowsVideoNative.release(reader);
-                    }
-                } finally {
-                    WindowsVideoNative.mfShutdown();
-                }
-            } finally {
-                if (weInitCom) WindowsVideoNative.comUninit();
-            }
+            String path = videoFile.toAbsolutePath().toString();
+            io.github.ghosthack.panama.media.mediafoundation.VideoInfo info =
+                    MediaFoundation.getVideoInfo(arena, path);
+            DecodedImage<PixelFormat> frame = MediaFoundation.extractFrame(
+                    arena, path, time.toMillis());
+            return toBufferedImage(frame, info.width(), info.height());
         } catch (IOException e) {
             throw e;
-        } catch (UnsupportedOperationException e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new javax.imageio.IIOException("Video frame extraction failed", t);
+        } catch (RuntimeException e) {
+            throw new IIOException(
+                    "Media Foundation frame extraction failed for: " + videoFile, e);
         }
     }
 
     @Override
     public VideoInfo getInfo(Path videoFile) throws IOException {
-        if (!IS_WINDOWS) throw new UnsupportedOperationException("Requires Windows");
+        Objects.requireNonNull(videoFile, "videoFile");
+        if (!isAvailable()) {
+            throw new UnsupportedOperationException("Requires Windows Media Foundation");
+        }
 
         try (Arena arena = Arena.ofConfined()) {
-            int hrInit = WindowsVideoNative.comInit();
-            boolean weInitCom = (hrInit == WindowsVideoNative.S_OK);
-            try {
-                WindowsVideoNative.mfStartup();
-                try {
-                    MemorySegment reader = MemorySegment.NULL;
-                    MemorySegment nativeType = MemorySegment.NULL;
-                    try {
-                        reader = WindowsVideoNative.createSourceReader(arena, videoFile.toString());
-
-                        // Get the native (compressed) media type for the first video stream
-                        MemorySegment ppType = arena.allocate(ValueLayout.ADDRESS);
-                        int hr = (int) WindowsVideoNative.IMFSourceReader_GetNativeMediaType.invokeExact(
-                                WindowsVideoNative.vtable(reader, 5),
-                                reader,
-                                WindowsVideoNative.MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                                0, // first type index
-                                ppType);
-                        WindowsVideoNative.check(hr, "IMFSourceReader::GetNativeMediaType failed");
-                        nativeType = ppType.get(ValueLayout.ADDRESS, 0);
-
-                        // Read frame size: MF_MT_FRAME_SIZE is a UINT64 packed as (width << 32 | height)
-                        MemorySegment pFrameSize = arena.allocate(ValueLayout.JAVA_LONG);
-                        hr = (int) WindowsVideoNative.IMFMediaType_GetUINT64.invokeExact(
-                                WindowsVideoNative.vtable(nativeType, 15),
-                                nativeType,
-                                WindowsVideoNative.MF_MT_FRAME_SIZE,
-                                pFrameSize);
-                        WindowsVideoNative.check(hr, "GetUINT64(MF_MT_FRAME_SIZE) failed");
-                        long frameSize = pFrameSize.get(ValueLayout.JAVA_LONG, 0);
-                        int width = (int) (frameSize >>> 32);
-                        int height = (int) (frameSize & 0xFFFFFFFFL);
-
-                        // Read frame rate: MF_MT_FRAME_RATE is UINT64 packed as (numerator << 32 | denominator)
-                        double frameRate = 0.0;
-                        MemorySegment pFrameRate = arena.allocate(ValueLayout.JAVA_LONG);
-                        hr = (int) WindowsVideoNative.IMFMediaType_GetUINT64.invokeExact(
-                                WindowsVideoNative.vtable(nativeType, 15),
-                                nativeType,
-                                WindowsVideoNative.MF_MT_FRAME_RATE,
-                                pFrameRate);
-                        if (!WindowsVideoNative.failed(hr)) {
-                            long rate = pFrameRate.get(ValueLayout.JAVA_LONG, 0);
-                            long numerator = rate >>> 32;
-                            long denominator = rate & 0xFFFFFFFFL;
-                            if (denominator > 0) {
-                                frameRate = (double) numerator / denominator;
-                            }
-                        }
-
-                        // TODO: Read duration from presentation descriptor
-                        //   IMFSourceReader::GetPresentationAttribute(
-                        //       MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &propvar)
-                        //   Duration is in 100-ns units as VT_UI8
-                        Duration duration = Duration.ZERO;
-
-                        // TODO: Read codec subtype GUID and map to string
-                        //   GetGUID(MF_MT_SUBTYPE) → compare against known FourCC GUIDs
-                        String codec = null;
-
-                        return new VideoInfo(width, height, duration, codec, frameRate);
-                    } finally {
-                        WindowsVideoNative.release(nativeType);
-                        WindowsVideoNative.release(reader);
-                    }
-                } finally {
-                    WindowsVideoNative.mfShutdown();
-                }
-            } finally {
-                if (weInitCom) WindowsVideoNative.comUninit();
-            }
-        } catch (IOException e) {
-            throw e;
-        } catch (UnsupportedOperationException e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new javax.imageio.IIOException("Video info extraction failed", t);
+            io.github.ghosthack.panama.media.mediafoundation.VideoInfo info =
+                    MediaFoundation.getVideoInfo(
+                            arena, videoFile.toAbsolutePath().toString());
+            return new VideoInfo(
+                    info.width(),
+                    info.height(),
+                    Duration.ofMillis(Math.max(0L, info.durationMillis())),
+                    normalizeCodec(info.codec()),
+                    info.frameRate());
+        } catch (RuntimeException e) {
+            throw new IIOException(
+                    "Media Foundation video metadata query failed for: " + videoFile, e);
         }
+    }
+
+    private static BufferedImage toBufferedImage(
+            DecodedImage<PixelFormat> image, int displayWidth, int displayHeight)
+            throws IIOException {
+        if (image.format() != PixelFormat.BGRA) {
+            throw new IIOException("Expected BGRA video pixels, got " + image.format());
+        }
+        if ((image.stride() & 3) != 0 || image.stride() < image.width() * 4) {
+            throw new IIOException("Invalid BGRA video stride: " + image.stride());
+        }
+
+        /*
+         * The Windows video processor can negotiate a minimum RGB32 canvas for
+         * very small sources (for example 192x96 for a 16x16 clip), leaving the
+         * source frame at the upper-left. Normalize that padded canvas back to
+         * the native display dimensions reported by the source media type.
+         *
+         * A 90/270-degree rotated frame has swapped dimensions; do not crop it
+         * to the unrotated metadata dimensions.
+         */
+        boolean rotatedSize = image.width() == displayHeight
+                && image.height() == displayWidth;
+        boolean paddedCanvas = !rotatedSize
+                && (image.width() != displayWidth || image.height() != displayHeight)
+                && displayWidth > 0 && displayHeight > 0
+                && image.width() >= displayWidth && image.height() >= displayHeight;
+        int width = paddedCanvas ? displayWidth : image.width();
+        int height = paddedCanvas ? displayHeight : image.height();
+
+        BufferedImage result = new BufferedImage(
+                width, height, BufferedImage.TYPE_INT_ARGB_PRE);
+        int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
+        MemorySegment pixels = image.pixels();
+
+        if (!paddedCanvas && image.stride() == image.width() * 4) {
+            MemorySegment.copy(pixels, ValueLayout.JAVA_INT, 0, dest, 0, dest.length);
+        } else {
+            for (int y = 0; y < height; y++) {
+                MemorySegment row = pixels.asSlice((long) y * image.stride());
+                MemorySegment.copy(
+                        row, ValueLayout.JAVA_INT, 0,
+                        dest, y * width, width);
+            }
+        }
+        return result;
+    }
+
+    private static String normalizeCodec(String codec) {
+        if (codec == null) return null;
+        return switch (codec.toUpperCase(Locale.ROOT)) {
+            case "H.264" -> "h264";
+            case "HEVC" -> "hevc";
+            case "VP8" -> "vp8";
+            case "VP9" -> "vp9";
+            case "AV1" -> "av1";
+            case "MPEG-4" -> "mpeg4";
+            case "MPEG-2" -> "mpeg2";
+            case "MPEG-1" -> "mpeg1";
+            case "WMV" -> "wmv";
+            case "MOTION JPEG" -> "mjpeg";
+            default -> codec.toLowerCase(Locale.ROOT);
+        };
     }
 }

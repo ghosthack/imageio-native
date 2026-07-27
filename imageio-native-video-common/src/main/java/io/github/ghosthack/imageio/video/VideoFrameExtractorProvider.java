@@ -1,9 +1,12 @@
 package io.github.ghosthack.imageio.video;
 
+import io.github.ghosthack.imageio.common.RoutingBackend;
+
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Set;
 
 /**
  * SPI for platform-specific video frame extraction backends.
@@ -12,7 +15,7 @@ import java.time.Duration;
  * be registered in
  * {@code META-INF/services/io.github.ghosthack.imageio.video.VideoFrameExtractorProvider}.
  */
-public interface VideoFrameExtractorProvider {
+public interface VideoFrameExtractorProvider extends RoutingBackend {
 
     /** Returns {@code true} if this backend is available on the current platform. */
     boolean isAvailable();
@@ -37,16 +40,21 @@ public interface VideoFrameExtractorProvider {
     VideoInfo getInfo(Path videoFile) throws IOException;
 
     /**
-     * Returns the backend name for
-     * {@link io.github.ghosthack.imageio.common.BackendPriority} ordering.
-     * <p>
-     * Default is {@code "native"} for platform-native backends (AVFoundation,
-     * Media Foundation).  Third-party backends override this (e.g.
-     * {@code "ffmpeg"}).
-     *
-     * @return backend name
+     * Declares the video containers this backend may decode.
      */
-    default String backendName() {
-        return "native";
+    default Set<String> formats() {
+        return Set.of("mp4", "mov", "m4v", "webm", "mkv", "avi", "wmv", "3gp");
+    }
+
+    /**
+     * Lightweight, input-specific capability probe.
+     */
+    default boolean canDecode(Path videoFile) {
+        try {
+            VideoInfo info = getInfo(videoFile);
+            return info.width() > 0 && info.height() > 0;
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
     }
 }
