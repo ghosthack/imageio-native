@@ -16,7 +16,7 @@
     <name>imageio-native-video-common</name>
     <description>
         Shared API for video frame extraction: VideoFrameExtractor, VideoInfo,
-        PathAwareImageInputStream, and ImageIO SPI registration for video formats.
+        and ImageIO SPI registration for video formats.
     </description>
 
     <dependencies>

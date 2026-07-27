@@ -29,7 +29,7 @@ public final class VideoRoutingImageReaderSpi extends ImageReaderSpi {
 
     @Override
     public boolean canDecodeInput(Object source) throws IOException {
-        if (!(source instanceof PathAwareImageInputStream stream)) {
+        if (!(source instanceof io.github.ghosthack.imageio.common.PathAwareImageInputStream stream)) {
             PENDING.remove();
             return false;
         }

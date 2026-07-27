@@ -9,6 +9,8 @@ import javax.imageio.spi.ImageReaderSpi;
 import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -33,6 +35,9 @@ import java.util.List;
  *       {@link #nativeDecodeFromPath}), the file path is passed directly
  *       to the native decoder — avoiding loading the entire file into the
  *       Java heap.</li>
+ *   <li>Other inputs are spooled to a temporary file in fixed-size chunks
+ *       before using the path-based hooks, keeping encoded image data out of
+ *       the Java heap when those hooks are supported.</li>
  * </ul>
  */
 public abstract class NativeImageReader extends ImageReader {
@@ -43,8 +48,8 @@ public abstract class NativeImageReader extends ImageReader {
     /** Cached raw image bytes from a prior size query, reused by {@link #read}. */
     private byte[] cachedData;
 
-    /** Cached file path from a prior path-based size query, reused by {@link #read}. */
-    private String cachedPath;
+    /** Cached path input from a prior size query, reused by {@link #read}. */
+    private PathInput cachedPath;
 
     protected NativeImageReader(ImageReaderSpi originatingProvider) {
         super(originatingProvider);
@@ -103,17 +108,17 @@ public abstract class NativeImageReader extends ImageReader {
 
     @Override
     public void setInput(Object input, boolean seekForwardOnly, boolean ignoreMetadata) {
+        discardCachedPath();
         super.setInput(input, seekForwardOnly, ignoreMetadata);
         cachedSize = null;
         cachedData = null;
-        cachedPath = null;
     }
 
     @Override
     public void dispose() {
+        discardCachedPath();
         cachedSize = null;
         cachedData = null;
-        cachedPath = null;
         super.dispose();
     }
 
@@ -123,18 +128,30 @@ public abstract class NativeImageReader extends ImageReader {
         if (cachedSize != null) return cachedSize;
 
         // Fast path: file-backed input → pass path directly to native decoder
-        String path = inputFilePath();
-        if (path != null) {
-            int[] size = nativeGetSizeFromPath(path);
+        PathInput pathInput = inputPath();
+        if (pathInput == null) {
+            pathInput = spoolToTemporaryFile((ImageInputStream) getInput());
+        }
+        byte[] fallbackData = null;
+        try {
+            int[] size = nativeGetSizeFromPath(pathInput.path().toString());
             if (size != null) {
                 cachedSize = size;
-                cachedPath = path;
+                cachedPath = pathInput;
+                pathInput = null;
                 return size;
             }
+            if (pathInput.temporary()) {
+                fallbackData = Files.readAllBytes(pathInput.path());
+            }
+        } finally {
+            deleteIfTemporary(pathInput);
         }
 
-        // Fallback: read entire file into byte[]
-        byte[] data = readAllBytes((ImageInputStream) getInput());
+        // Compatibility fallback for subclasses without path-based hooks.
+        byte[] data = fallbackData != null
+                ? fallbackData
+                : readAllBytes((ImageInputStream) getInput());
         cachedSize = nativeGetSize(data);
         cachedData = data;
         return cachedSize;
@@ -173,31 +190,40 @@ public abstract class NativeImageReader extends ImageReader {
         checkParam(param);
 
         // Fast path: decode directly from file path (no Java heap copy)
-        String path = cachedPath;
+        PathInput pathInput = cachedPath;
         cachedPath = null;
-        if (path == null) path = inputFilePath();
-        if (path != null) {
-            BufferedImage result = nativeDecodeFromPath(path);
-            if (result != null) {
-                cachedData = null;
-                processImageStarted(imageIndex);
-                processImageProgress(100.0f);
-                processImageComplete();
-                return result;
+        if (pathInput == null) pathInput = inputPath();
+        if (pathInput == null && cachedData == null) {
+            pathInput = spoolToTemporaryFile((ImageInputStream) getInput());
+        }
+        try {
+            if (pathInput != null) {
+                BufferedImage result = nativeDecodeFromPath(pathInput.path().toString());
+                if (result != null) {
+                    cachedData = null;
+                    processImageStarted(imageIndex);
+                    processImageProgress(100.0f);
+                    processImageComplete();
+                    return result;
+                }
             }
-        }
 
-        // Fallback: decode from byte[]
-        byte[] data = cachedData;
-        cachedData = null;          // allow GC after decode
-        if (data == null) {
-            data = readAllBytes((ImageInputStream) getInput());
+            // Compatibility fallback for subclasses without path-based hooks.
+            byte[] data = cachedData;
+            cachedData = null;          // allow GC after decode
+            if (data == null) {
+                data = pathInput != null && pathInput.temporary()
+                        ? Files.readAllBytes(pathInput.path())
+                        : readAllBytes((ImageInputStream) getInput());
+            }
+            processImageStarted(imageIndex);
+            BufferedImage result = nativeDecode(data);
+            processImageProgress(100.0f);
+            processImageComplete();
+            return result;
+        } finally {
+            deleteIfTemporary(pathInput);
         }
-        processImageStarted(imageIndex);
-        BufferedImage result = nativeDecode(data);
-        processImageProgress(100.0f);
-        processImageComplete();
-        return result;
     }
 
     @Override
@@ -252,20 +278,69 @@ public abstract class NativeImageReader extends ImageReader {
      *
      * @return absolute file path, or {@code null} if the input is not file-backed
      */
-    private String inputFilePath() {
+    private PathInput inputPath() {
         Object in = getInput();
         if (in == null) return null;
         try {
             java.lang.reflect.Method m = in.getClass().getMethod("getPath");
             if (Path.class.isAssignableFrom(m.getReturnType())) {
                 Object result = m.invoke(in);
-                return result != null ? result.toString() : null;
+                return result != null ? new PathInput((Path) result, false) : null;
             }
         } catch (Exception ignored) {
             // Not a path-aware stream
         }
         return null;
     }
+
+    /**
+     * Copies a non-path input to disk without retaining the encoded image in
+     * the Java heap. The returned file belongs to this reader and must be
+     * deleted after decoding or when the reader is reset/disposed.
+     */
+    private PathInput spoolToTemporaryFile(ImageInputStream stream) throws IOException {
+        if (stream == null)
+            throw new IllegalStateException("No input set");
+        if (!isSeekForwardOnly()) {
+            stream.seek(0);
+        }
+
+        Path path = Files.createTempFile("imageio-native-", ".image");
+        boolean complete = false;
+        try (OutputStream output = Files.newOutputStream(path)) {
+            byte[] buffer = new byte[65536];
+            int read;
+            while ((read = stream.read(buffer)) >= 0) {
+                if (read > 0) {
+                    output.write(buffer, 0, read);
+                    if (isSeekForwardOnly()) {
+                        stream.flushBefore(stream.getStreamPosition());
+                    }
+                }
+            }
+            complete = true;
+            return new PathInput(path, true);
+        } finally {
+            if (!complete) Files.deleteIfExists(path);
+        }
+    }
+
+    private void discardCachedPath() {
+        PathInput pathInput = cachedPath;
+        cachedPath = null;
+        deleteIfTemporary(pathInput);
+    }
+
+    private static void deleteIfTemporary(PathInput pathInput) {
+        if (pathInput == null || !pathInput.temporary()) return;
+        try {
+            Files.deleteIfExists(pathInput.path());
+        } catch (IOException ignored) {
+            pathInput.path().toFile().deleteOnExit();
+        }
+    }
+
+    private record PathInput(Path path, boolean temporary) {}
 
     private byte[] readAllBytes(ImageInputStream stream) throws IOException {
         if (stream == null)

@@ -22,8 +22,9 @@ import java.util.List;
  * Supports a single image (the poster frame at t=0).  For time-based
  * extraction or multi-frame access, use {@link VideoFrameExtractor} directly.
  * <p>
- * Requires the input to be a {@link PathAwareImageInputStream} so that
- * the file path can be passed to the native video extraction APIs.
+ * Requires the input to be a
+ * {@link io.github.ghosthack.imageio.common.PathAwareImageInputStream} so
+ * that the file path can be passed to the native video extraction APIs.
  */
 public class NativeVideoReader extends ImageReader {
 
@@ -110,11 +111,11 @@ public class NativeVideoReader extends ImageReader {
 
     private Path getFilePath() throws IOException {
         Object in = getInput();
-        if (in instanceof PathAwareImageInputStream pais) {
+        if (in instanceof io.github.ghosthack.imageio.common.PathAwareImageInputStream pais) {
             return pais.getPath();
         }
         throw new IOException(
-                "NativeVideoReader requires PathAwareImageInputStream input. "
+                "NativeVideoReader requires a path-aware ImageInputStream. "
                 + "Use VideoFrameExtractor.extractFrame(Path, Duration) for direct access.");
     }
 
