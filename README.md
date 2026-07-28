@@ -4,9 +4,11 @@
 
 Java ImageIO readers that delegate to **platform-native image decoding APIs** via [Project Panama](https://openjdk.org/jeps/454) (Foreign Function & Memory API, Java 26+).
 
-Drop the JAR on your classpath and `ImageIO.read()` gains support for **HEIC, AVIF, WEBP, JPEG 2000, JPEG XL, camera RAW, PSD, EXR**, and more. No JNI, no native builds, no manual SPI wiring.
+Add the JAR to your module path (or class path) and `ImageIO.read()` gains support for **HEIC, AVIF, WEBP, JPEG 2000, JPEG XL, camera RAW, PSD, EXR**, and more. No JNI, no native builds, no manual SPI wiring.
 
-Decode only. Still images only (video files yield a single poster frame). All modules are pure Java — they compile on any OS and auto-detect the platform at runtime.
+Image decoding only—no encoding. Optional video modules return a single still
+frame, not playback, audio, or frame sequences. The Java modules compile on any
+OS and detect compatible backends at runtime.
 
 ## Quick start
 
@@ -20,10 +22,30 @@ Add the dependency:
 </dependency>
 ```
 
-For a class-path application, grant native access to the unnamed module:
+<details>
+<summary>Gradle</summary>
 
-```text
---enable-native-access=ALL-UNNAMED
+```kotlin
+implementation("io.github.ghosthack:imageio-native:2.0.0")
+```
+
+</details>
+
+For a modular application, require the cross-platform image aggregator:
+
+```java
+module com.example.app {
+    requires io.github.ghosthack.imageio;
+}
+```
+
+Grant native access only to the backend modules used on the host. For example,
+a modular macOS application can launch with:
+
+```sh
+java --module-path lib \
+     --enable-native-access=io.github.ghosthack.imageio.apple \
+     --module com.example.app/com.example.Main
 ```
 
 Then use standard ImageIO:
@@ -38,38 +60,53 @@ All standard lookup methods work: `getImageReadersByFormatName`, `getImageReader
 
 The `imageio-native` aggregator pulls in both platform modules and auto-selects at runtime. You can also depend on `imageio-native-apple` or `imageio-native-windows` directly.
 
-### `ImageReadParam`
+## Platform and format support
 
-Native readers implement source regions, subsampling and subsampling offsets,
-destination images and offsets, source and destination bands, destination
-types, and source render sizes. Progressive-pass selection is not silently
-ignored: requesting it fails with `IIOException`, because the native decoder
-APIs do not expose compatible progressive passes.
+The main aggregator provides native backends for macOS and Windows:
 
-Source render sizing is pushed into Apple, WIC, libvips, ImageMagick, AVFoundation,
-and FFmpeg native processing. libvips and ImageMagick also crop before
-materializing the Java image; the shared layer applies any remaining operations
-with the same normalized ImageIO regions for every backend.
+| Module | Platform | Native API | Formats |
+|--------|----------|------------|---------|
+| `imageio-native-apple` | macOS | CGImageSource (Apple ImageIO framework) | 60+ |
+| `imageio-native-windows` | Windows 10+ | Windows Imaging Component (WIC) | 30+ |
 
-Readers reject a required native or Java intermediate larger than 512 MiB
-instead of unexpectedly allocating it. This includes full-source ImageMagick
-processing and the worst-case thumbnail surfaces used for exact Apple/WIC
-render sizes. Override the limit in bytes with
-`-Dimageio.native.maxIntermediateBytes=<bytes>`.
+- **Both platforms:** HEIC, HEIF, AVIF, WebP, DNG, CR2, CR3, NEF, ARW, ICO,
+  CUR, DDS, and many more camera RAW formats.
 
-<details>
-<summary>Gradle</summary>
+- **Apple-only:** JPEG 2000, JPEG XL, PSD, OpenEXR, Radiance HDR, DICOM, ICNS,
+  TGA, SGI, PBM/PGM/PPM, PICT, MPO, KTX, KTX2, ASTC, PVR, and ATX.
 
-```kotlin
-implementation("io.github.ghosthack:imageio-native:2.0.0")
+- **Windows-only:** JPEG-XR (JXR/WDP/HDP).
+
+Actual support depends on the codecs installed on the host. The
+[optional libvips and ImageMagick backends](#optional-backends) add Linux support
+and additional formats; the [optional video modules](#video-poster-frames) add
+poster-frame extraction.
+
+### Windows codec requirements
+
+| Format | Requirement |
+|--------|-------------|
+| HEIC/HEIF | [HEVC Video Extensions](https://apps.microsoft.com/detail/9nmzlz57r3t7) from Microsoft Store |
+| AVIF | [AV1 Video Extensions](https://apps.microsoft.com/detail/9mvzqvxjbq9v) from Microsoft Store |
+| WebP | Built-in (Windows 10 1809+) |
+| JPEG-XR | Built-in |
+
+To check whether the required codecs are already installed:
+
+```powershell
+Get-AppxPackage -Name *hevc*   # HEVC (for HEIC/HEIF)
+Get-AppxPackage -Name *av1*    # AV1 (for AVIF)
 ```
 
-</details>
+> **Minimum image dimensions:** The HEVC and AV1 codec extensions cannot decode
+> images smaller than 8×8 pixels. Header parsing and format detection may still
+> succeed, but pixel decoding fails with `E_INVALIDARG`. This is a limitation of
+> the Windows codec extensions, not WIC or this library.
 
-### JPMS module path
+## Native access
 
-Every artifact is an explicit JPMS module. A modular application can require
-the cross-platform aggregators:
+Every artifact is an explicit named JPMS module. Applications that also decode
+video can require the video aggregator alongside the image aggregator:
 
 ```java
 module com.example.app {
@@ -89,83 +126,193 @@ rather than to every class-path dependency:
 | Windows video | `io.github.ghosthack.panama.media.core,io.github.ghosthack.panama.media.comruntime,io.github.ghosthack.panama.media.mediafoundation` |
 | libvips | `io.github.ghosthack.imageio.vips` |
 | ImageMagick | `io.github.ghosthack.imageio.magick` |
-| FFmpeg | `io.github.ghosthack.imageio.video.ffmpeg` |
+| FFmpeg | `ffmpeg.ffm` |
 
-For example, a modular macOS image application can launch with:
+### Class-path applications
 
-```sh
-java --enable-native-access=io.github.ghosthack.imageio.apple \
-     --module-path lib \
-     --module com.example.app/com.example.Main
+When the application and its dependencies run on the class path, they belong to
+the unnamed module. Grant native access with:
+
+```text
+--enable-native-access=ALL-UNNAMED
 ```
 
 The existing `META-INF/services` registrations remain in the JARs for
-class-path compatibility; equivalent `uses` and `provides` declarations enable
-the same ImageIO and backend discovery on the module path.
+class-path compatibility. Equivalent `uses` and `provides` declarations enable
+the same ImageIO and backend discovery on the module path. Shaded or fat JARs
+that do not preserve a named module also use the class-path form.
 
-## Routing
+## Backend selection and routing
 
-This implementation has modules for two native APIs:
+The host Java runtime is the baseline. With no imageio-native backend modules
+installed, ImageIO behaves exactly as supplied by that runtime.
 
-| Module | Platform | Native API | Formats |
-|--------|----------|------------|---------|
-| `imageio-native-apple` | macOS | CGImageSource (Apple ImageIO framework) | 60+ |
-| `imageio-native-windows` | Windows 10+ | Windows Imaging Component (WIC) | 30+ |
+Adding a backend module is an explicit opt-in to that backend. If exactly one
+installed backend can decode an input, that backend owns the input, including
+formats that the JDK can also decode.
 
-The host JDK is unchanged when no added backend can decode an input. Installing
-a backend opts into every format that backend declares and can actually decode,
-including intersections such as JPEG and PNG. A single capable backend therefore
-owns the input ahead of the JDK reader.
+For example, adding the Windows module means WIC owns every input that WIC can
+actually decode. If WIC can decode a JPEG, the JPEG is routed to WIC rather than
+the JDK reader. Applications that want the JDK reader for a particular
+intersection can explicitly route that format back to the host.
 
-When multiple added backends can decode the same input, portable/software
-backends win by default over platform-native backends; stable backend IDs break
-ties. Applications can own intersection choices explicitly during startup:
+<details>
+<summary>Detailed routing contract and configuration</summary>
+
+### Principles
+
+1. **Preserve the host by default.** With no added backend capable of decoding
+   an input, the routing SPI declines it and the host ImageIO implementation
+   proceeds normally.
+2. **Module presence is authorization.** Adding a backend module opts into all
+   formats that backend can actually decode. There is no implicit
+   "supplemental formats only" mode.
+3. **A single added backend overrides the JDK.** If one installed backend is
+   capable, it owns the input even when a host JDK reader is also capable.
+4. **Capability is input-specific.** Declaring support for a format or container
+   only makes a backend a candidate. A lightweight probe must confirm that the
+   backend on this machine can open the actual input. This accounts for optional
+   Windows codecs and for different codecs inside the same video container.
+5. **Non-intersecting capability sets do not collide.** A format supported by
+   only one added backend belongs to that backend without consulting collision
+   policy.
+6. **Intersections have one deterministic owner.** When multiple added backends
+   are capable, a portable/software-codec backend wins by default over a
+   platform-native backend. This is a predictability and portability policy,
+   not a claim that one implementation is inherently more secure.
+7. **Applications control intersections explicitly.** A small,
+   application-owned Java configuration can select a different backend—or the
+   host JDK—for any intersecting format.
+8. **Routing is not decode-time fallback.** The router filters candidates using
+   capability probes, selects exactly one owner, and invokes it once. If the
+   selected decoder subsequently fails, its error is returned; the router does
+   not silently retry another implementation.
+9. **Configuration is stable.** Application routing must be installed before
+   the first routed ImageIO operation. The configuration freezes on first use,
+   making behavior independent of class-loading or SPI-registration timing.
+10. **Direct backend APIs bypass routing.** Calling a WIC, Media Foundation,
+    FFmpeg, libvips, or ImageMagick API directly always invokes that backend.
+
+### Ownership algorithm
+
+For an input `x` with detected format `f`:
+
+```text
+candidates = installed backends
+    that declare f
+    and whose lightweight probe accepts x
+
+if candidates is empty:
+    decline x                         // host JDK behavior
+
+if policy explicitly selects host for f:
+    decline x                         // host JDK behavior
+
+if policy selects backend b for f and b is in candidates:
+    select b
+
+if candidates contains exactly one backend:
+    select that backend               // overrides the JDK
+
+select the deterministic default:
+    portable/software before platform-native
+    stable backend ID as the tie-breaker within a class
+```
+
+An explicit backend preference only resolves among capable candidates. It never
+forces an unavailable backend to decode an unsupported input. Unknown backend
+IDs in application configuration fail fast as configuration errors.
+
+### Examples
+
+The JPEG/FFmpeg combination is intentionally illustrative; it defines the
+routing semantics independently of the formats implemented by today's modules.
+
+Assume the host JDK, Windows/WIC, and FFmpeg can all decode JPEG:
+
+| Installed modules | Application rule | JPEG owner |
+|---|---|---|
+| None | None | Host JDK |
+| Windows | None | Windows/WIC |
+| FFmpeg | None | FFmpeg |
+| Windows + FFmpeg | None | FFmpeg (portable/software default) |
+| Windows + FFmpeg | `jpeg -> windows` | Windows/WIC |
+| Windows + FFmpeg | `jpeg -> host` | Host JDK |
+
+If the Windows module is installed but WIC's probe rejects a particular JPEG,
+WIC is not a candidate for that input. Another capable added backend owns it,
+or the router declines it and leaves it to the host.
+
+For non-intersecting formats:
+
+```text
+Windows supports HEIC, FFmpeg does not  -> Windows owns HEIC
+FFmpeg supports MKV, Windows does not   -> FFmpeg owns MKV
+Neither supports a PNG input            -> host ImageIO handles PNG
+```
+
+### Application-owned routing
+
+Applications can keep all intersection choices in one minimal Java class:
 
 ```java
 import io.github.ghosthack.imageio.common.ImageIoRouting;
 
-ImageIoRouting.configure(routes -> routes
-        .prefer("jpeg", "windows")
-        .prefer("heic", "windows")
-        .prefer("mkv", "ffmpeg")
-        .preferHost("png"));
+public final class AppImageIoRouting {
+    private AppImageIoRouting() {}
+
+    public static void install() {
+        ImageIoRouting.configure(routes -> routes
+                .prefer("jpeg", "windows")
+                .prefer("heic", "windows")
+                .prefer("mkv", "ffmpeg")
+                .preferHost("png"));
+    }
+}
 ```
 
 Valid backend IDs are `apple`, `windows`, `vips`, `magick`, and `ffmpeg` when
-the corresponding module is installed. Configuration freezes on the first
-routed operation. A selected decoder is invoked once; decode failure is returned
-to the caller without retrying another backend. Direct backend APIs bypass the
-router.
+the corresponding module is installed. The application calls the installation
+method once during startup, before its first ImageIO operation:
 
-See [ROUTING.md](ROUTING.md) for the complete ownership contract.
-
-### Supported formats
-
-**Both platforms:** HEIC, HEIF, AVIF, WebP, DNG, CR2, CR3, NEF, ARW, ICO, CUR, DDS, and many more camera RAW formats
-
-**Apple-only:** JPEG 2000, JPEG XL, PSD, OpenEXR, Radiance HDR, DICOM, ICNS, TGA, SGI, PBM/PGM/PPM, PICT, MPO, KTX, KTX2, ASTC, PVR, ATX
-
-**Windows-only:** JPEG-XR (JXR/WDP/HDP)
-
-### Windows codec requirements
-
-| Format | Requirement |
-|--------|-------------|
-| HEIC/HEIF | [HEVC Video Extensions](https://apps.microsoft.com/detail/9nmzlz57r3t7) from Microsoft Store |
-| AVIF | [AV1 Video Extensions](https://apps.microsoft.com/detail/9mvzqvxjbq9v) from Microsoft Store |
-| WebP | Built-in (Windows 10 1809+) |
-| JPEG-XR | Built-in |
-
-To check whether the required codecs are already installed:
-
-```powershell
-Get-AppxPackage -Name *hevc*   # HEVC (for HEIC/HEIF)
-Get-AppxPackage -Name *av1*    # AV1 (for AVIF)
+```java
+AppImageIoRouting.install();
 ```
 
-> **Minimum image dimensions:** The HEVC and AV1 codec extensions cannot decode very small images. HEIC/HEIF requires at least 8×8 pixels and AVIF requires at least 8×8 pixels. Smaller images will fail with `E_INVALIDARG` during pixel decoding even though header parsing and format detection succeed. This is a limitation of the Windows codec extensions, not of WIC or this library.
+Configuration is explicit Java code rather than registration-order tricks,
+system-property priority lists, or magically discovered application classes.
 
-## Runtime detection
+### Registration model
+
+Backend modules register backend services, not mutually competing
+`ImageReaderSpi` implementations. One routing SPI per media category owns
+integration with ImageIO:
+
+```text
+ImageIO
+    |
+    v
+routing SPI
+    |
+    +-- detect the format once
+    +-- discover installed backend services
+    +-- run lightweight capability probes
+    +-- resolve ownership
+    `-- delegate to exactly one backend
+```
+
+The routing SPI is ordered before host readers, but returns `false` whenever no
+added backend owns the input. Consequently it affects a host format only when
+an installed backend has positively claimed that particular input.
+
+Backend-to-backend `IIORegistry.setOrdering()`, shared format advertisements on
+every backend SPI, global priority properties, and decode-time retry chains are
+not part of this design.
+
+</details>
+
+<details>
+<summary>Runtime detection for optional dependencies</summary>
 
 To check at runtime whether imageio-native is on the classpath (e.g. when it's an optional dependency), probe a class from the `imageio-native-common` module — it's a transitive dependency of every platform module, so it's always present regardless of which artifact was included:
 
@@ -186,6 +333,8 @@ Class.forName("io.github.ghosthack.imageio.apple.AppleImageBackend");
 // Windows (imageio-native-windows)
 Class.forName("io.github.ghosthack.imageio.windows.WindowsImageBackend");
 ```
+
+</details>
 
 ## Optional backends
 
@@ -350,7 +499,28 @@ capable added backend, allowing the host ImageIO readers to proceed normally.
 Both platform modules compile on all operating systems; native loading remains
 guarded by availability checks.
 
-## EXIF orientation
+## Advanced ImageIO behavior
+
+### `ImageReadParam`
+
+Native readers implement source regions, subsampling and subsampling offsets,
+destination images and offsets, source and destination bands, destination
+types, and source render sizes. Progressive-pass selection is not silently
+ignored: requesting it fails with `IIOException`, because the native decoder
+APIs do not expose compatible progressive passes.
+
+Source render sizing is pushed into Apple, WIC, libvips, ImageMagick,
+AVFoundation, and FFmpeg native processing. libvips and ImageMagick also crop
+before materializing the Java image; the shared layer applies any remaining
+operations with the same normalized ImageIO regions for every backend.
+
+Readers reject a required native or Java intermediate larger than 512 MiB
+instead of unexpectedly allocating it. This includes full-source ImageMagick
+processing and the worst-case thumbnail surfaces used for exact Apple/WIC
+render sizes. Override the limit in bytes with
+`-Dimageio.native.maxIntermediateBytes=<bytes>`.
+
+### EXIF orientation
 
 Images from phones and cameras often carry an EXIF orientation tag (values 1-8) that describes how the sensor image should be rotated or flipped for correct display. Both backends apply this transform automatically during decode so the returned `BufferedImage` is always display-ready.
 
