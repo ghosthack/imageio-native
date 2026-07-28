@@ -1,7 +1,9 @@
 package io.github.ghosthack.imageio.video;
 
+import io.github.ghosthack.imageio.common.ImageReadParamSupport;
 import io.github.ghosthack.imageio.common.RoutingBackend;
 
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -31,6 +33,28 @@ public interface VideoFrameExtractorProvider extends RoutingBackend {
     BufferedImage extractFrame(Path videoFile, Duration time) throws IOException;
 
     /**
+     * Extracts a frame rendered at an exact size.
+     * <p>
+     * Backends should override this method when they can reduce native output
+     * allocation. The default preserves correctness by scaling after the
+     * regular extraction path.
+     */
+    default BufferedImage extractFrame(
+            Path videoFile, Duration time, Dimension renderSize)
+            throws IOException {
+        return ImageReadParamSupport.renderToSize(
+                extractFrame(videoFile, time), renderSize);
+    }
+
+    /**
+     * Returns whether {@link #extractFrame(Path, Duration, Dimension)}
+     * reduces the native output allocation rather than scaling a full frame.
+     */
+    default boolean supportsRenderSizeReduction() {
+        return false;
+    }
+
+    /**
      * Returns video metadata without decoding frames.
      *
      * @param videoFile path to the video file
@@ -47,14 +71,16 @@ public interface VideoFrameExtractorProvider extends RoutingBackend {
     }
 
     /**
-     * Lightweight, input-specific capability probe.
+     * Input-specific decoder capability probe.
+     * <p>
+     * Implementations that claim inputs must verify both that the input
+     * contains a video stream and that this backend can open a decoder for
+     * that stream on the current machine. Reading container metadata alone is
+     * not sufficient. The conservative default claims no inputs.
+     *
+     * @return {@code true} only when this backend can decode the input
      */
     default boolean canDecode(Path videoFile) {
-        try {
-            VideoInfo info = getInfo(videoFile);
-            return info.width() > 0 && info.height() > 0;
-        } catch (IOException | RuntimeException e) {
-            return false;
-        }
+        return false;
     }
 }

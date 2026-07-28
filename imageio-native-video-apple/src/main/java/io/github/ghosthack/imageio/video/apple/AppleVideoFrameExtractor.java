@@ -1,10 +1,12 @@
 package io.github.ghosthack.imageio.video.apple;
 
 import io.github.ghosthack.imageio.apple.AppleCoreGraphicsHelper;
+import io.github.ghosthack.imageio.common.ImageReadParamSupport;
 import io.github.ghosthack.imageio.common.RoutingBackend;
 import io.github.ghosthack.imageio.video.VideoFrameExtractorProvider;
 import io.github.ghosthack.imageio.video.VideoInfo;
 
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.lang.foreign.*;
@@ -87,8 +89,12 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
     private static final MethodHandle msgSend_ptr_ptr;
     /** (id, SEL, byte) → void */
     private static final MethodHandle msgSend_bool;
+    /** (id, SEL) → BOOL */
+    private static final MethodHandle msgSend_ret_bool;
     /** (id, SEL, CMTime) → void — set tolerance */
     private static final MethodHandle msgSend_cmtime_void;
+    /** (id, SEL, CGSize) → void — set maximum output size */
+    private static final MethodHandle msgSend_cgsize_void;
     /** (id, SEL, CMTime, ptr, ptr) → id — copyCGImageAtTime:actualTime:error: */
     private static final MethodHandle msgSend_cmtime_ptr_ptr;
     /** (id, SEL) → CMTime — duration property */
@@ -154,10 +160,21 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
                     FunctionDescriptor.ofVoid(
                             ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_BYTE));
 
+            // (id, SEL) → BOOL (for properties like isPlayable)
+            msgSend_ret_bool = LINKER.downcallHandle(objc_msgSend_addr,
+                    FunctionDescriptor.of(
+                            ValueLayout.JAVA_BYTE,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+
             // (id, SEL, CMTime) → void (setRequestedTimeToleranceBefore:/After:)
             msgSend_cmtime_void = LINKER.downcallHandle(objc_msgSend_addr,
                     FunctionDescriptor.ofVoid(
                             ValueLayout.ADDRESS, ValueLayout.ADDRESS, CMTIME));
+
+            // (id, SEL, CGSize) → void (setMaximumSize:)
+            msgSend_cgsize_void = LINKER.downcallHandle(objc_msgSend_addr,
+                    FunctionDescriptor.ofVoid(
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS, CGSIZE));
 
             // (id, SEL, CMTime, ptr, ptr) → id (copyCGImageAtTime:actualTime:error:)
             msgSend_cmtime_ptr_ptr = LINKER.downcallHandle(objc_msgSend_addr,
@@ -195,7 +212,9 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
             msgSend_ptr = null;
             msgSend_ptr_ptr = null;
             msgSend_bool = null;
+            msgSend_ret_bool = null;
             msgSend_cmtime_void = null;
+            msgSend_cgsize_void = null;
             msgSend_cmtime_ptr_ptr = null;
             msgSend_ret_cmtime = null;
             msgSend_ret_cgsize = null;
@@ -249,7 +268,73 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
     }
 
     @Override
+    public boolean canDecode(Path videoFile) {
+        if (!IS_MACOS || videoFile == null) return false;
+
+        try (Arena arena = Arena.ofConfined()) {
+            String absPath = videoFile.toAbsolutePath().toString();
+            MemorySegment cfPath =
+                    (MemorySegment) CFStringCreateWithCString.invokeExact(
+                            MemorySegment.NULL,
+                            arena.allocateFrom(absPath),
+                            kCFStringEncodingUTF8);
+            if (MemorySegment.NULL.equals(cfPath)) return false;
+
+            try {
+                MemorySegment url =
+                        (MemorySegment) msgSend_ptr.invokeExact(
+                                cls(arena, "NSURL"),
+                                sel(arena, "fileURLWithPath:"),
+                                cfPath);
+                if (MemorySegment.NULL.equals(url)) return false;
+
+                MemorySegment asset =
+                        (MemorySegment) msgSend_ptr_ptr.invokeExact(
+                                cls(arena, "AVURLAsset"),
+                                sel(arena, "URLAssetWithURL:options:"),
+                                url,
+                                MemorySegment.NULL);
+                if (MemorySegment.NULL.equals(asset)) return false;
+
+                byte playable =
+                        (byte) msgSend_ret_bool.invokeExact(
+                                asset, sel(arena, "isPlayable"));
+                if (playable == 0) return false;
+
+                MemorySegment mediaTypeSymbol =
+                        LOOKUP.find("AVMediaTypeVideo").orElseThrow();
+                MemorySegment mediaType =
+                        mediaTypeSymbol
+                                .reinterpret(ValueLayout.ADDRESS.byteSize())
+                                .get(ValueLayout.ADDRESS, 0);
+                MemorySegment tracks =
+                        (MemorySegment) msgSend_ptr_ret_ptr.invokeExact(
+                                asset,
+                                sel(arena, "tracksWithMediaType:"),
+                                mediaType);
+                if (MemorySegment.NULL.equals(tracks)) return false;
+
+                MemorySegment firstTrack =
+                        (MemorySegment) msgSend.invokeExact(
+                                tracks, sel(arena, "firstObject"));
+                return !MemorySegment.NULL.equals(firstTrack);
+            } finally {
+                release(cfPath);
+            }
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    @Override
     public BufferedImage extractFrame(Path videoFile, Duration time) throws IOException {
+        return extractFrame(videoFile, time, null);
+    }
+
+    @Override
+    public BufferedImage extractFrame(
+            Path videoFile, Duration time, Dimension renderSize)
+            throws IOException {
         if (!IS_MACOS) throw new UnsupportedOperationException("Requires macOS");
 
         try (Arena arena = Arena.ofConfined()) {
@@ -298,6 +383,19 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
                 // 5. setAppliesPreferredTrackTransform: YES
                 MemorySegment selSetTransform = sel(arena, "setAppliesPreferredTrackTransform:");
                 msgSend_bool.invokeExact(generator, selSetTransform, (byte) 1);
+
+                if (renderSize != null) {
+                    MemorySegment maximumSize = arena.allocate(CGSIZE);
+                    maximumSize.set(ValueLayout.JAVA_DOUBLE, 0, renderSize.width);
+                    maximumSize.set(
+                            ValueLayout.JAVA_DOUBLE,
+                            ValueLayout.JAVA_DOUBLE.byteSize(),
+                            renderSize.height);
+                    MemorySegment selSetMaximumSize =
+                            sel(arena, "setMaximumSize:");
+                    msgSend_cgsize_void.invokeExact(
+                            generator, selSetMaximumSize, maximumSize);
+                }
 
                 // 6. Set tolerances for frame seek.
                 //    Using exact tolerance (zero) can fail for videos that don't have
@@ -353,7 +451,11 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
                 }
 
                 // 9. Convert CGImage to BufferedImage
-                return AppleCoreGraphicsHelper.cgImageToBufferedImage(cgImage, arena);
+                BufferedImage decoded =
+                        AppleCoreGraphicsHelper.cgImageToBufferedImage(
+                                cgImage, arena);
+                return ImageReadParamSupport.renderToSize(
+                        decoded, renderSize);
 
             } finally {
                 // cgImage is a CF object returned by "copy" — we own it
@@ -366,6 +468,11 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
         } catch (Throwable t) {
             throw new IOException("Video frame extraction failed", t);
         }
+    }
+
+    @Override
+    public boolean supportsRenderSizeReduction() {
+        return true;
     }
 
     @Override

@@ -9,8 +9,10 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -123,6 +125,27 @@ class AppleImageReaderTest {
             assertNotNull(img, "PNG should still be readable");
             assertEquals(8, img.getWidth());
             reader.dispose();
+        }
+    }
+
+    @Test
+    void sourceRenderSizeUsesReducedDecodePath() throws IOException {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png");
+             ImageInputStream iis = ImageIO.createImageInputStream(is)) {
+            assertNotNull(is);
+            AppleImageReader reader = new AppleImageReader(null);
+            try {
+                reader.setInput(iis);
+                ImageReadParam param = reader.getDefaultReadParam();
+                param.setSourceRenderSize(new Dimension(4, 2));
+
+                BufferedImage image = reader.read(0, param);
+
+                assertEquals(4, image.getWidth());
+                assertEquals(2, image.getHeight());
+            } finally {
+                reader.dispose();
+            }
         }
     }
 

@@ -52,6 +52,11 @@ public final class RoutingImageReader extends ImageReader {
     }
 
     @Override
+    public ImageReadParam getDefaultReadParam() {
+        return ImageReadParamSupport.createDefaultReadParam();
+    }
+
+    @Override
     public BufferedImage read(int imageIndex, ImageReadParam param) throws IOException {
         return delegate().read(imageIndex, param);
     }

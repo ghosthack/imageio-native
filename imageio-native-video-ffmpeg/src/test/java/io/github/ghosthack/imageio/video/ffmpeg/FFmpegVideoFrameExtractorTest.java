@@ -3,6 +3,7 @@ package io.github.ghosthack.imageio.video.ffmpeg;
 import io.github.ghosthack.imageio.video.VideoInfo;
 import org.junit.jupiter.api.Test;
 
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -44,6 +45,19 @@ class FFmpegVideoFrameExtractorTest {
         assertTrue(extractor.isAvailable(), "Bundled FFmpeg should be available");
     }
 
+    @Test
+    void capabilityProbeRequiresOpenableVideoDecoder() throws Exception {
+        assumeFFmpeg();
+        Path invalid = Files.createTempFile("ffmpeg-test-invalid-", ".mp4");
+        invalid.toFile().deleteOnExit();
+        Files.writeString(invalid, "not a decodable video");
+
+        assertTrue(
+                extractor.canDecode(
+                        extractResource("test-video-3s.mp4")));
+        assertFalse(extractor.canDecode(invalid));
+    }
+
     // ── getInfo ─────────────────────────────────────────────────────────
 
     @Test
@@ -82,6 +96,20 @@ class FFmpegVideoFrameExtractorTest {
         assertEquals(16, frame.getWidth());
         assertEquals(16, frame.getHeight());
         assertDominantColor(frame, 1, "green");
+    }
+
+    @Test
+    void extractFrameAtRequestedRenderSize() throws Exception {
+        assumeFFmpeg();
+        BufferedImage frame = extractor.extractFrame(
+                extractResource("test-video-3s.mp4"),
+                Duration.ZERO,
+                new Dimension(8, 4));
+
+        assertEquals(8, frame.getWidth());
+        assertEquals(4, frame.getHeight());
+        assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, frame.getType());
+        assertDominantColor(frame, 0, "red");
     }
 
     @Test

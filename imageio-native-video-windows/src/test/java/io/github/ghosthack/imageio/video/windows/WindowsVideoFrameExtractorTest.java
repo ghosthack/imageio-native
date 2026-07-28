@@ -6,9 +6,11 @@ import io.github.ghosthack.imageio.common.TestPixels;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 
@@ -31,6 +33,9 @@ class WindowsVideoFrameExtractorTest {
     private static final int TOLERANCE = 70;
 
     private static final Path TEST_VIDEO_MP4 = testResource("test-video-3s.mp4");
+
+    @TempDir
+    Path tempDir;
 
     private final WindowsVideoFrameExtractor extractor = new WindowsVideoFrameExtractor();
 
@@ -60,15 +65,29 @@ class WindowsVideoFrameExtractorTest {
         assertTrue(extractor.isAvailable());
     }
 
+    @Test
+    void capabilityProbeRequiresOpenableVideoDecoder() throws IOException {
+        assumeCanDecode();
+        Path invalid = tempDir.resolve("invalid.mp4");
+        Files.writeString(invalid, "not a decodable video");
+
+        assertTrue(extractor.canDecode(TEST_VIDEO_MP4));
+        assertFalse(extractor.canDecode(invalid));
+    }
+
     // ── extractFrame ────────────────────────────────────────────────────
 
     @Test
-    void extractFrameAtZero() throws IOException {
+    void extractFrameNormalizesSmallDecoderCanvas() throws IOException {
         assumeCanDecode();
         BufferedImage frame = extractor.extractFrame(TEST_VIDEO_MP4, Duration.ZERO);
         assertNotNull(frame, "Frame at t=0 should not be null");
-        assertEquals(16, frame.getWidth());
-        assertEquals(16, frame.getHeight());
+        assertEquals(
+                16, frame.getWidth(),
+                "Media Foundation surface padding must not leak");
+        assertEquals(
+                16, frame.getHeight(),
+                "Media Foundation surface padding must not leak");
         assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, frame.getType());
         TestPixels.assertColourClose(
                 "Red frame at t=0", RED, frame.getRGB(8, 8), TOLERANCE);

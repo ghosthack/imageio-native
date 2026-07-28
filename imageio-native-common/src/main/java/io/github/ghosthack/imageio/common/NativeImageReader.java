@@ -19,10 +19,11 @@ import java.util.List;
 /**
  * Shared {@link ImageReader} base for platform-native image decoders.
  * <p>
- * Subclasses supply two hooks — a lightweight dimension query and a full
- * pixel decode — and this class provides the complete {@code ImageReader}
- * contract including {@code ImageReadParam} validation, forward-only stream
- * handling, and dimension caching.
+ * Subclasses supply a lightweight dimension query and pixel decode hooks.
+ * Capability-aware overloads may apply safe {@code ImageReadParam} reductions
+ * before materializing Java pixels. This class provides the complete
+ * {@code ImageReader} contract including parameter validation, forward-only
+ * stream handling, and dimension caching.
  * <p>
  * Behaviour:
  * <ul>
@@ -70,6 +71,32 @@ public abstract class NativeImageReader extends ImageReader {
      */
     protected abstract BufferedImage nativeDecode(byte[] data) throws IOException;
 
+    /**
+     * Decodes bytes while optionally applying safe read operations.
+     * Subclasses may override this hook and must accurately report applied
+     * operations in the returned result.
+     */
+    protected NativeDecodeResult nativeDecode(
+            byte[] data, NativeDecodeRequest request) throws IOException {
+        return NativeDecodeResult.fullSize(nativeDecode(data));
+    }
+
+    /**
+     * Returns whether this backend can apply exact source regions and
+     * subsampling before materializing its Java image.
+     */
+    protected boolean supportsNativeSpatialSelection() {
+        return false;
+    }
+
+    /**
+     * Returns whether this backend reduces native output to the requested
+     * source render size.
+     */
+    protected boolean supportsNativeSourceRenderSize() {
+        return false;
+    }
+
     // ── Optional path-based hooks (subclasses override for zero-copy) ──
 
     /**
@@ -102,6 +129,16 @@ public abstract class NativeImageReader extends ImageReader {
      */
     protected BufferedImage nativeDecodeFromPath(String path) throws IOException {
         return null;
+    }
+
+    /**
+     * Path-based counterpart to
+     * {@link #nativeDecode(byte[], NativeDecodeRequest)}.
+     */
+    protected NativeDecodeResult nativeDecodeFromPath(
+            String path, NativeDecodeRequest request) throws IOException {
+        BufferedImage image = nativeDecodeFromPath(path);
+        return image != null ? NativeDecodeResult.fullSize(image) : null;
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────
@@ -185,9 +222,24 @@ public abstract class NativeImageReader extends ImageReader {
     }
 
     @Override
+    public ImageReadParam getDefaultReadParam() {
+        return ImageReadParamSupport.createDefaultReadParam();
+    }
+
+    @Override
     public BufferedImage read(int imageIndex, ImageReadParam param) throws IOException {
         checkIndex(imageIndex);
-        checkParam(param);
+        ImageReadParamSupport.validate(param);
+        guardIntermediateAllocation(param);
+        NativeDecodeRequest decodeRequest;
+        if (supportsNativeSpatialSelection()
+                && NativeDecodeRequest.requestsSpatialSelection(param)) {
+            int[] sourceSize = ensureSize();
+            decodeRequest = NativeDecodeRequest.from(
+                    param, sourceSize[0], sourceSize[1]);
+        } else {
+            decodeRequest = NativeDecodeRequest.from(param);
+        }
 
         // Fast path: decode directly from file path (no Java heap copy)
         PathInput pathInput = cachedPath;
@@ -198,10 +250,14 @@ public abstract class NativeImageReader extends ImageReader {
         }
         try {
             if (pathInput != null) {
-                BufferedImage result = nativeDecodeFromPath(pathInput.path().toString());
-                if (result != null) {
+                NativeDecodeResult decoded =
+                        nativeDecodeFromPath(
+                                pathInput.path().toString(), decodeRequest);
+                if (decoded != null) {
                     cachedData = null;
                     processImageStarted(imageIndex);
+                    BufferedImage result =
+                            ImageReadParamSupport.apply(decoded, param);
                     processImageProgress(100.0f);
                     processImageComplete();
                     return result;
@@ -217,7 +273,8 @@ public abstract class NativeImageReader extends ImageReader {
                         : readAllBytes((ImageInputStream) getInput());
             }
             processImageStarted(imageIndex);
-            BufferedImage result = nativeDecode(data);
+            NativeDecodeResult decoded = nativeDecode(data, decodeRequest);
+            BufferedImage result = ImageReadParamSupport.apply(decoded, param);
             processImageProgress(100.0f);
             processImageComplete();
             return result;
@@ -244,27 +301,29 @@ public abstract class NativeImageReader extends ImageReader {
             throw new IndexOutOfBoundsException("Only image index 0 is supported, got: " + imageIndex);
     }
 
-    /**
-     * Validates the {@code ImageReadParam}.
-     * <p>
-     * This reader always decodes the full image at full resolution into a
-     * {@code TYPE_INT_ARGB_PRE} buffer, so source region, subsampling,
-     * destination offset, and destination image are silently ignored
-     * (per the {@link ImageReader} contract for unsupported parameters).
-     * <p>
-     * The only check retained is {@code destinationType}: if the caller
-     * explicitly requests a type other than {@code TYPE_INT_ARGB_PRE},
-     * we reject it because the output type is fixed.
-     */
-    private static void checkParam(ImageReadParam param) throws IIOException {
-        if (param == null) return;
-        // Reject an explicit destination type that conflicts with our output
-        ImageTypeSpecifier destType = param.getDestinationType();
-        if (destType != null
-                && destType.getBufferedImageType() != BufferedImage.TYPE_INT_ARGB_PRE)
-            throw new IIOException("Only TYPE_INT_ARGB_PRE is supported as destination type");
-        // All other unsupported params (region, subsampling, destination,
-        // offset) are silently ignored per the ImageReader contract.
+    private void guardIntermediateAllocation(ImageReadParam param)
+            throws IOException {
+        boolean renderFallsBack = param != null
+                && param.getSourceRenderSize() != null
+                && !supportsNativeSourceRenderSize();
+        boolean spatialFallsBack =
+                NativeDecodeRequest.requestsSpatialSelection(param)
+                && !supportsNativeSpatialSelection();
+        if (!renderFallsBack && !spatialFallsBack) {
+            return;
+        }
+
+        int width;
+        int height;
+        if (!renderFallsBack && param.getSourceRenderSize() != null) {
+            width = param.getSourceRenderSize().width;
+            height = param.getSourceRenderSize().height;
+        } else {
+            int[] sourceSize = ensureSize();
+            width = sourceSize[0];
+            height = sourceSize[1];
+        }
+        ImageReadParamSupport.validateIntermediateDimensions(width, height);
     }
 
     /**

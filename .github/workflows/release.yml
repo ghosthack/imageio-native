@@ -3,14 +3,56 @@ name: Release
 on:
   release:
     types: [published]
-  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maven-central-release
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  validate:
+    if: github.event.release.prerelease == false
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 26
+          cache: maven
+
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="$(mvn -q help:evaluate -Dexpression=project.version -DforceStdout)"
+          if [[ "$VERSION" == *-SNAPSHOT ]]; then
+            echo "::error::Cannot release snapshot version $VERSION"
+            exit 1
+          fi
+          if [[ "$RELEASE_TAG" != "v$VERSION" ]]; then
+            echo "::error::Release tag $RELEASE_TAG must match project version v$VERSION"
+            exit 1
+          fi
+
+  verify:
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ github.event.release.tag_name }}
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
 
       - name: Set up JDK 26
         uses: actions/setup-java@v5

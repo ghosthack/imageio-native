@@ -1,6 +1,8 @@
 package io.github.ghosthack.imageio.apple;
 
 import io.github.ghosthack.imageio.common.NativeImageReader;
+import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+import io.github.ghosthack.imageio.common.NativeDecodeResult;
 
 import javax.imageio.spi.ImageReaderSpi;
 import java.awt.image.BufferedImage;
@@ -19,6 +21,11 @@ public class AppleImageReader extends NativeImageReader {
     }
 
     @Override
+    protected boolean supportsNativeSourceRenderSize() {
+        return true;
+    }
+
+    @Override
     protected int[] nativeGetSize(byte[] data) throws IOException {
         return AppleNative.getSize(data);
     }
@@ -29,6 +36,16 @@ public class AppleImageReader extends NativeImageReader {
     }
 
     @Override
+    protected NativeDecodeResult nativeDecode(
+            byte[] data, NativeDecodeRequest request) throws IOException {
+        if (!request.hasSourceRenderSize()) {
+            return super.nativeDecode(data, request);
+        }
+        return NativeDecodeResult.sourceRendered(
+                AppleNative.decode(data, request.sourceRenderSize()));
+    }
+
+    @Override
     protected int[] nativeGetSizeFromPath(String path) throws IOException {
         return AppleNative.getSizeFromPath(path);
     }
@@ -36,5 +53,15 @@ public class AppleImageReader extends NativeImageReader {
     @Override
     protected BufferedImage nativeDecodeFromPath(String path) throws IOException {
         return AppleNative.decodeFromPath(path);
+    }
+
+    @Override
+    protected NativeDecodeResult nativeDecodeFromPath(
+            String path, NativeDecodeRequest request) throws IOException {
+        if (!request.hasSourceRenderSize()) {
+            return super.nativeDecodeFromPath(path, request);
+        }
+        return NativeDecodeResult.sourceRendered(
+                AppleNative.decodeFromPath(path, request.sourceRenderSize()));
     }
 }
