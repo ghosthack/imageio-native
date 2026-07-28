@@ -1,10 +1,14 @@
 package io.github.ghosthack.imageio.windows;
 
 import io.github.ghosthack.imageio.common.NativeImageReader;
+import io.github.ghosthack.imageio.common.ImageReadParamSupport;
+import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+import io.github.ghosthack.imageio.common.NativeDecodeResult;
 import io.github.ghosthack.panama.media.core.Dimensions;
 import io.github.ghosthack.panama.media.wic.WIC;
 
 import javax.imageio.spi.ImageReaderSpi;
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -20,6 +24,11 @@ public class WicImageReader extends NativeImageReader {
 
     protected WicImageReader(ImageReaderSpi originatingProvider) {
         super(originatingProvider);
+    }
+
+    @Override
+    protected boolean supportsNativeSourceRenderSize() {
+        return true;
     }
 
     @Override
@@ -57,6 +66,30 @@ public class WicImageReader extends NativeImageReader {
             return PanamaMediaImages.toBufferedImage(WIC.decodeFromPath(arena, path));
         } catch (RuntimeException e) {
             throw PanamaMediaImages.decodeFailure("WIC image decode failed for: " + path, e);
+        }
+    }
+
+    @Override
+    protected NativeDecodeResult nativeDecodeFromPath(
+            String path, NativeDecodeRequest request) throws IOException {
+        if (!request.hasSourceRenderSize()) {
+            return super.nativeDecodeFromPath(path, request);
+        }
+        try (Arena arena = Arena.ofConfined()) {
+            Dimension renderSize = request.sourceRenderSize();
+            int maxDimension = Math.max(renderSize.width, renderSize.height);
+            // WIC's thumbnail API accepts one maximum edge rather than an
+            // exact shape, so conservatively bound its possible square output.
+            ImageReadParamSupport.validateIntermediateDimensions(
+                    maxDimension, maxDimension);
+            BufferedImage thumbnail = PanamaMediaImages.toBufferedImage(
+                    WIC.decodeThumbnailFromPath(arena, path, maxDimension));
+            BufferedImage rendered = ImageReadParamSupport.renderToSize(
+                    thumbnail, renderSize);
+            return NativeDecodeResult.sourceRendered(rendered);
+        } catch (RuntimeException e) {
+            throw PanamaMediaImages.decodeFailure(
+                    "WIC reduced image decode failed for: " + path, e);
         }
     }
 }

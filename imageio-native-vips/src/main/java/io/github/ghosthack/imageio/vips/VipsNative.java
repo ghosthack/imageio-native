@@ -1,6 +1,10 @@
 package io.github.ghosthack.imageio.vips;
 
+import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+
 import javax.imageio.IIOException;
+import java.awt.Dimension;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
@@ -30,6 +34,7 @@ final class VipsNative {
 
     private static final int VIPS_INTERPRETATION_sRGB = 22;
     private static final int VIPS_ACCESS_SEQUENTIAL = 1;
+    private static final int VIPS_SIZE_FORCE = 3;
 
     /** Maximum total pixel count to prevent OOM (same as the platform-native backends). */
     private static final long MAX_PIXELS = 256L * 1024 * 1024;
@@ -47,6 +52,8 @@ final class VipsNative {
     private static final MethodHandle vips_init;
     private static final MethodHandle vips_image_new_from_file;
     private static final MethodHandle vips_image_new_from_buffer;
+    private static final MethodHandle vips_thumbnail;
+    private static final MethodHandle vips_extract_area;
     private static final MethodHandle vips_image_get_width;
     private static final MethodHandle vips_image_get_height;
     private static final MethodHandle vips_image_get_bands;
@@ -94,6 +101,28 @@ final class VipsNative {
                             ValueLayout.JAVA_LONG, ValueLayout.ADDRESS,
                             ValueLayout.ADDRESS),
                     Linker.Option.firstVariadicArg(3));
+
+            // vips_thumbnail(path, out, width, "height", height,
+            //                "size", VIPS_SIZE_FORCE, NULL)
+            vips_thumbnail = LINKER.downcallHandle(
+                    LOOKUP.find("vips_thumbnail").orElseThrow(),
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS, ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS, ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS),
+                    Linker.Option.firstVariadicArg(3));
+
+            // vips_extract_area(in, out, left, top, width, height, NULL)
+            vips_extract_area = LINKER.downcallHandle(
+                    LOOKUP.find("vips_extract_area").orElseThrow(),
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_INT, ValueLayout.JAVA_INT,
+                            ValueLayout.JAVA_INT, ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS),
+                    Linker.Option.firstVariadicArg(6));
 
             // Dimension queries
             vips_image_get_width = downcall("vips_image_get_width",
@@ -169,6 +198,8 @@ final class VipsNative {
             vips_init = null;
             vips_image_new_from_file = null;
             vips_image_new_from_buffer = null;
+            vips_thumbnail = null;
+            vips_extract_area = null;
             vips_image_get_width = null;
             vips_image_get_height = null;
             vips_image_get_bands = null;
@@ -327,6 +358,182 @@ final class VipsNative {
         }
     }
 
+    /**
+     * Loads and renders a path at an exact size through libvips' demand-driven
+     * thumbnail pipeline before materializing pixels.
+     */
+    static BufferedImage decodeFromPath(
+            String path, int renderWidth, int renderHeight) throws IOException {
+        if (!AVAILABLE) throw new IIOException("libvips is not available");
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment cpath =
+                    arena.allocateFrom(path, StandardCharsets.UTF_8);
+            MemorySegment heightKey =
+                    arena.allocateFrom("height", StandardCharsets.UTF_8);
+            MemorySegment sizeKey =
+                    arena.allocateFrom("size", StandardCharsets.UTF_8);
+            MemorySegment output = arena.allocate(ValueLayout.ADDRESS);
+
+            int rc = (int) vips_thumbnail.invokeExact(
+                    cpath, output, renderWidth,
+                    heightKey, renderHeight,
+                    sizeKey, VIPS_SIZE_FORCE,
+                    MemorySegment.NULL);
+            if (rc != 0) {
+                throw new IIOException(
+                        "vips thumbnail failed for: " + path
+                                + " — " + errorMessage());
+            }
+
+            MemorySegment image = output.get(ValueLayout.ADDRESS, 0);
+            if (MemorySegment.NULL.equals(image)) {
+                throw new IIOException(
+                        "vips thumbnail returned NULL for: " + path);
+            }
+            try {
+                return decodeFromVipsImage(arena, image);
+            } finally {
+                g_object_unref.invokeExact(image);
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new IIOException(
+                    "vips reduced decode failed for: " + path, t);
+        }
+    }
+
+    /**
+     * Executes render sizing and effective source cropping in libvips before
+     * materializing pixels, then performs exact ImageIO point subsampling on
+     * the cropped raster.
+     */
+    static BufferedImage decodeFromPath(
+            String path, NativeDecodeRequest request) throws IOException {
+        if (!AVAILABLE) throw new IIOException("libvips is not available");
+        if (!request.hasSpatialSelection()) {
+            throw new IllegalArgumentException(
+                    "request has no spatial selection");
+        }
+
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment base = loadForRequest(arena, path, request);
+            MemorySegment cropped = MemorySegment.NULL;
+            try {
+                Rectangle region = request.sourceRegion();
+                MemorySegment croppedOutput =
+                        arena.allocate(ValueLayout.ADDRESS);
+                int rc = (int) vips_extract_area.invokeExact(
+                        base,
+                        croppedOutput,
+                        region.x,
+                        region.y,
+                        region.width,
+                        region.height,
+                        MemorySegment.NULL);
+                if (rc != 0) {
+                    throw new IIOException(
+                            "vips extract_area failed: " + errorMessage());
+                }
+                cropped = croppedOutput.get(ValueLayout.ADDRESS, 0);
+                return subsampleExact(
+                        decodeFromVipsImage(arena, cropped),
+                        request.sourceXSubsampling(),
+                        request.sourceYSubsampling());
+            } finally {
+                if (!MemorySegment.NULL.equals(cropped)) {
+                    g_object_unref.invokeExact(cropped);
+                }
+                g_object_unref.invokeExact(base);
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new IIOException(
+                    "vips spatial decode failed for: " + path, t);
+        }
+    }
+
+    private static BufferedImage subsampleExact(
+            BufferedImage source, int xSubsampling, int ySubsampling) {
+        if (xSubsampling == 1 && ySubsampling == 1) {
+            return source;
+        }
+
+        int outputWidth =
+                (source.getWidth() + xSubsampling - 1) / xSubsampling;
+        int outputHeight =
+                (source.getHeight() + ySubsampling - 1) / ySubsampling;
+        BufferedImage output = new BufferedImage(
+                outputWidth, outputHeight, BufferedImage.TYPE_INT_ARGB_PRE);
+        int[] sourcePixels = ((DataBufferInt)
+                source.getRaster().getDataBuffer()).getData();
+        int[] outputPixels = ((DataBufferInt)
+                output.getRaster().getDataBuffer()).getData();
+
+        for (int y = 0; y < outputHeight; y++) {
+            int sourceRow = y * ySubsampling * source.getWidth();
+            int outputRow = y * outputWidth;
+            for (int x = 0; x < outputWidth; x++) {
+                outputPixels[outputRow + x] =
+                        sourcePixels[sourceRow + x * xSubsampling];
+            }
+        }
+        return output;
+    }
+
+    private static MemorySegment loadForRequest(
+            Arena arena, String path, NativeDecodeRequest request)
+            throws Throwable {
+        MemorySegment cpath =
+                arena.allocateFrom(path, StandardCharsets.UTF_8);
+        if (request.hasSourceRenderSize()) {
+            Dimension renderSize = request.sourceRenderSize();
+            MemorySegment heightKey =
+                    arena.allocateFrom("height", StandardCharsets.UTF_8);
+            MemorySegment sizeKey =
+                    arena.allocateFrom("size", StandardCharsets.UTF_8);
+            MemorySegment output = arena.allocate(ValueLayout.ADDRESS);
+            int rc = (int) vips_thumbnail.invokeExact(
+                    cpath,
+                    output,
+                    renderSize.width,
+                    heightKey,
+                    renderSize.height,
+                    sizeKey,
+                    VIPS_SIZE_FORCE,
+                    MemorySegment.NULL);
+            if (rc != 0) {
+                throw new IIOException(
+                        "vips thumbnail failed: " + errorMessage());
+            }
+            return output.get(ValueLayout.ADDRESS, 0);
+        }
+
+        MemorySegment accessKey =
+                arena.allocateFrom("access", StandardCharsets.UTF_8);
+        MethodHandle loadWithAccess = LINKER.downcallHandle(
+                LOOKUP.find("vips_image_new_from_file").orElseThrow(),
+                FunctionDescriptor.of(
+                        ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS,
+                        ValueLayout.ADDRESS,
+                        ValueLayout.JAVA_INT,
+                        ValueLayout.ADDRESS),
+                Linker.Option.firstVariadicArg(1));
+        MemorySegment image = (MemorySegment) loadWithAccess.invokeExact(
+                cpath,
+                accessKey,
+                VIPS_ACCESS_SEQUENTIAL,
+                MemorySegment.NULL);
+        if (MemorySegment.NULL.equals(image)) {
+            throw new IIOException(
+                    "vips load failed for: " + path
+                            + " — " + errorMessage());
+        }
+        return image;
+    }
+
     // ── Internal decode pipeline ────────────────────────────────────────
 
     /**
@@ -442,12 +649,14 @@ final class VipsNative {
     private static SymbolLookup loadLibraries() {
         // Load GLib first (needed for g_object_unref / g_free)
         loadLib("libgobject-2.0", new String[]{
+                "/opt/homebrew/lib/libgobject-2.0.dylib",      // Homebrew Apple Silicon
                 "/opt/local/lib/libgobject-2.0.dylib",          // MacPorts
-                "/usr/local/lib/libgobject-2.0.dylib",          // Homebrew
+                "/usr/local/lib/libgobject-2.0.dylib",          // Homebrew Intel
                 "/usr/lib/x86_64-linux-gnu/libgobject-2.0.so",  // Debian x86_64
                 "/usr/lib/aarch64-linux-gnu/libgobject-2.0.so", // Debian aarch64
         });
         loadLib("libglib-2.0", new String[]{
+                "/opt/homebrew/lib/libglib-2.0.dylib",
                 "/opt/local/lib/libglib-2.0.dylib",
                 "/usr/local/lib/libglib-2.0.dylib",
                 "/usr/lib/x86_64-linux-gnu/libglib-2.0.so",
@@ -462,6 +671,7 @@ final class VipsNative {
         }
 
         String[] paths = {
+                "/opt/homebrew/lib/libvips.dylib",
                 "/opt/local/lib/libvips.dylib",
                 "/usr/local/lib/libvips.dylib",
                 "/usr/lib/x86_64-linux-gnu/libvips.so",

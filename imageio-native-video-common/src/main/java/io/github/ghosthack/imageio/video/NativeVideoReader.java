@@ -1,5 +1,10 @@
 package io.github.ghosthack.imageio.video;
 
+import io.github.ghosthack.imageio.common.ImageReadParamSupport;
+import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+import io.github.ghosthack.imageio.common.NativeDecodeResult;
+
+import javax.imageio.IIOException;
 import javax.imageio.ImageReadParam;
 import javax.imageio.ImageReader;
 import javax.imageio.ImageTypeSpecifier;
@@ -27,6 +32,9 @@ import java.util.List;
  * that the file path can be passed to the native video extraction APIs.
  */
 public class NativeVideoReader extends ImageReader {
+
+    private static final long MAX_INTERMEDIATE_BYTES = Long.getLong(
+            "imageio.native.maxIntermediateBytes", 512L * 1024 * 1024);
 
     private VideoFrameExtractorProvider provider;
     private volatile VideoInfo cachedInfo;
@@ -67,11 +75,28 @@ public class NativeVideoReader extends ImageReader {
     }
 
     @Override
+    public ImageReadParam getDefaultReadParam() {
+        return ImageReadParamSupport.createDefaultReadParam();
+    }
+
+    @Override
     public BufferedImage read(int imageIndex, ImageReadParam param) throws IOException {
         checkIndex(imageIndex);
+        ImageReadParamSupport.validate(param);
+        guardIntermediateAllocation(param);
         Path path = getFilePath();
         processImageStarted(imageIndex);
-        BufferedImage result = provider().extractFrame(path, Duration.ZERO);
+        NativeDecodeRequest request = NativeDecodeRequest.from(param);
+        NativeDecodeResult decoded;
+        if (request.hasSourceRenderSize()) {
+            BufferedImage image = provider().extractFrame(
+                    path, Duration.ZERO, request.sourceRenderSize());
+            decoded = NativeDecodeResult.sourceRendered(image);
+        } else {
+            decoded = NativeDecodeResult.fullSize(
+                    provider().extractFrame(path, Duration.ZERO));
+        }
+        BufferedImage result = ImageReadParamSupport.apply(decoded, param);
         processImageProgress(100.0f);
         processImageComplete();
         return result;
@@ -102,6 +127,38 @@ public class NativeVideoReader extends ImageReader {
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
+
+    private void guardIntermediateAllocation(ImageReadParam param)
+            throws IOException {
+        VideoFrameExtractorProvider extractor = provider();
+        boolean renderFallsBack = param != null
+                && param.getSourceRenderSize() != null
+                && !extractor.supportsRenderSizeReduction();
+        boolean spatialFallsBack =
+                NativeDecodeRequest.requestsSpatialSelection(param);
+        if (!renderFallsBack && !spatialFallsBack) {
+            return;
+        }
+
+        int width;
+        int height;
+        if (!renderFallsBack && param.getSourceRenderSize() != null) {
+            width = param.getSourceRenderSize().width;
+            height = param.getSourceRenderSize().height;
+        } else {
+            VideoInfo info = ensureInfo();
+            width = info.width();
+            height = info.height();
+        }
+        if ((long) width * height > MAX_INTERMEDIATE_BYTES / 4L) {
+            throw new IIOException(
+                    "Read parameters require a full "
+                            + width + "x" + height
+                            + " intermediate, exceeding imageio.native."
+                            + "maxIntermediateBytes="
+                            + MAX_INTERMEDIATE_BYTES);
+        }
+    }
 
     private void checkIndex(int imageIndex) throws IOException {
         if (imageIndex != 0) {

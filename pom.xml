@@ -39,6 +39,7 @@
         <connection>scm:git:https://github.com/ghosthack/imageio-native.git</connection>
         <developerConnection>scm:git:ssh://git@github.com/ghosthack/imageio-native.git</developerConnection>
         <url>https://github.com/ghosthack/imageio-native</url>
+        <tag>v${project.version}</tag>
     </scm>
 
     <issueManagement>
@@ -64,8 +65,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>26</maven.compiler.release>
         <junit.version>6.0.3</junit.version>
-        <panama-media.version>0.1.0</panama-media.version>
-        <ffmpeg-ffm.version>8.1.2-0.3.1</ffmpeg-ffm.version>
+        <panama-media.version>0.1.1</panama-media.version>
+        <ffmpeg-ffm.version>8.1.2-0.3.2</ffmpeg-ffm.version>
     </properties>
 
     <dependencyManagement>
@@ -139,7 +140,7 @@
                 <plugin>
                     <groupId>org.sonatype.central</groupId>
                     <artifactId>central-publishing-maven-plugin</artifactId>
-                    <version>0.10.0</version>
+                    <version>0.11.0</version>
                 </plugin>
             </plugins>
         </pluginManagement>
@@ -189,6 +190,7 @@
                         <configuration>
                             <publishingServerId>central</publishingServerId>
                             <autoPublish>true</autoPublish>
+                            <waitUntil>published</waitUntil>
                         </configuration>
                     </plugin>
                 </plugins>

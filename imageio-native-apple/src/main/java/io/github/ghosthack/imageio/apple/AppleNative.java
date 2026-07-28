@@ -1,5 +1,8 @@
 package io.github.ghosthack.imageio.apple;
 
+import io.github.ghosthack.imageio.common.ImageReadParamSupport;
+
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.lang.foreign.*;
 import java.lang.invoke.MethodHandle;
@@ -341,7 +344,8 @@ final class AppleNative {
      * Decodes a full image from a CGImageSource with EXIF orientation applied.
      * The caller owns the imgSrc and is responsible for releasing it.
      */
-    private static BufferedImage decodeFromSource(Arena arena, MemorySegment imgSrc)
+    private static BufferedImage decodeFromSource(
+            Arena arena, MemorySegment imgSrc, Dimension renderSize)
             throws java.io.IOException {
         MemorySegment props = MemorySegment.NULL;
         MemorySegment thumbOpts = MemorySegment.NULL;
@@ -357,13 +361,24 @@ final class AppleNative {
             if (rawW <= 0 || rawH <= 0)
                 throw new javax.imageio.IIOException("Invalid image dimensions: " + rawW + "x" + rawH);
 
-            long totalPixels = (long) rawW * rawH;
-            if (totalPixels > MAX_PIXELS)
+            long decodedPixels = renderSize != null
+                    ? (long) renderSize.width * renderSize.height
+                    : (long) rawW * rawH;
+            if (decodedPixels > MAX_PIXELS)
                 throw new javax.imageio.IIOException(
-                        "Image too large: " + rawW + "x" + rawH + " (" + totalPixels
-                                + " pixels exceeds limit of " + MAX_PIXELS + ")");
+                        "Decoded image too large: " + decodedPixels
+                                + " pixels exceeds limit of " + MAX_PIXELS);
 
-            int maxDim = Math.max(rawW, rawH);
+            int maxDim = renderSize != null
+                    ? Math.max(renderSize.width, renderSize.height)
+                    : Math.max(rawW, rawH);
+            if (renderSize != null) {
+                // CGImageSource accepts only a maximum edge, not an exact
+                // target shape. Bound its worst-case square thumbnail before
+                // the exact render-size correction below.
+                ImageReadParamSupport.validateIntermediateDimensions(
+                        maxDim, maxDim);
+            }
             thumbOpts = createThumbnailOptions(arena, maxDim);
             if (MemorySegment.NULL.equals(thumbOpts))
                 throw new javax.imageio.IIOException("Failed to create thumbnail options");
@@ -374,7 +389,9 @@ final class AppleNative {
                 throw new javax.imageio.IIOException(
                         "CGImageSourceCreateThumbnailAtIndex returned NULL – decode failed");
 
-            return AppleCoreGraphicsHelper.cgImageToBufferedImage(cgImage, arena);
+            BufferedImage decoded =
+                    AppleCoreGraphicsHelper.cgImageToBufferedImage(cgImage, arena);
+            return ImageReadParamSupport.renderToSize(decoded, renderSize);
         } catch (java.io.IOException e) {
             throw e;
         } catch (Throwable t) {
@@ -517,6 +534,15 @@ final class AppleNative {
      * @throws javax.imageio.IIOException if the native decode fails or OS is not macOS
      */
     static BufferedImage decode(byte[] imageData) throws java.io.IOException {
+        return decode(imageData, null);
+    }
+
+    /**
+     * Decodes bytes with an optional native thumbnail bound before producing
+     * an exact Java render size.
+     */
+    static BufferedImage decode(byte[] imageData, Dimension renderSize)
+            throws java.io.IOException {
         if (!IS_MACOS)
             throw new javax.imageio.IIOException("Apple ImageIO decoding is only available on macOS");
 
@@ -536,7 +562,7 @@ final class AppleNative {
                 if (MemorySegment.NULL.equals(imgSrc))
                     throw new javax.imageio.IIOException("Unsupported format");
 
-                return decodeFromSource(arena, imgSrc);
+                return decodeFromSource(arena, imgSrc, renderSize);
             } catch (java.io.IOException e) {
                 throw e;
             } catch (Throwable t) {
@@ -557,6 +583,15 @@ final class AppleNative {
      * @throws javax.imageio.IIOException if the native decode fails or OS is not macOS
      */
     static BufferedImage decodeFromPath(String path) throws java.io.IOException {
+        return decodeFromPath(path, null);
+    }
+
+    /**
+     * Decodes a path with an optional native thumbnail bound before producing
+     * an exact Java render size.
+     */
+    static BufferedImage decodeFromPath(String path, Dimension renderSize)
+            throws java.io.IOException {
         if (!IS_MACOS)
             throw new javax.imageio.IIOException("Apple ImageIO decoding is only available on macOS");
 
@@ -577,7 +612,7 @@ final class AppleNative {
                 if (MemorySegment.NULL.equals(imgSrc))
                     throw new javax.imageio.IIOException("Unsupported format: " + path);
 
-                return decodeFromSource(arena, imgSrc);
+                return decodeFromSource(arena, imgSrc, renderSize);
             } catch (java.io.IOException e) {
                 throw e;
             } catch (Throwable t) {

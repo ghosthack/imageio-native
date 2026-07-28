@@ -1,6 +1,8 @@
 package io.github.ghosthack.imageio.magick;
 
 import io.github.ghosthack.imageio.common.NativeImageReader;
+import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+import io.github.ghosthack.imageio.common.NativeDecodeResult;
 
 import javax.imageio.spi.ImageReaderSpi;
 import java.awt.image.BufferedImage;
@@ -19,6 +21,16 @@ class MagickImageReader extends NativeImageReader {
     }
 
     @Override
+    protected boolean supportsNativeSpatialSelection() {
+        return true;
+    }
+
+    @Override
+    protected boolean supportsNativeSourceRenderSize() {
+        return true;
+    }
+
+    @Override
     protected int[] nativeGetSize(byte[] data) throws IOException {
         return MagickNative.getSize(data);
     }
@@ -29,6 +41,20 @@ class MagickImageReader extends NativeImageReader {
     }
 
     @Override
+    protected NativeDecodeResult nativeDecode(
+            byte[] data, NativeDecodeRequest request) throws IOException {
+        if (request.hasSpatialSelection()) {
+            return NativeDecodeResult.spatiallySelected(
+                    MagickNative.decode(data, request), request);
+        }
+        if (!request.hasSourceRenderSize()) {
+            return super.nativeDecode(data, request);
+        }
+        return NativeDecodeResult.sourceRendered(
+                MagickNative.decode(data, request.sourceRenderSize()));
+    }
+
+    @Override
     protected int[] nativeGetSizeFromPath(String path) throws IOException {
         return MagickNative.getSizeFromPath(path);
     }
@@ -36,5 +62,19 @@ class MagickImageReader extends NativeImageReader {
     @Override
     protected BufferedImage nativeDecodeFromPath(String path) throws IOException {
         return MagickNative.decodeFromPath(path);
+    }
+
+    @Override
+    protected NativeDecodeResult nativeDecodeFromPath(
+            String path, NativeDecodeRequest request) throws IOException {
+        if (request.hasSpatialSelection()) {
+            return NativeDecodeResult.spatiallySelected(
+                    MagickNative.decodeFromPath(path, request), request);
+        }
+        if (!request.hasSourceRenderSize()) {
+            return super.nativeDecodeFromPath(path, request);
+        }
+        return NativeDecodeResult.sourceRendered(
+                MagickNative.decodeFromPath(path, request.sourceRenderSize()));
     }
 }

@@ -23,8 +23,15 @@ final class VideoRouting {
     }
 
     static Decision select(Path path, String format) {
+        return select(path, format, backends());
+    }
+
+    static Decision select(
+            Path path,
+            String format,
+            Iterable<? extends VideoFrameExtractorProvider> backends) {
         List<VideoFrameExtractorProvider> candidates = new ArrayList<>();
-        for (VideoFrameExtractorProvider backend : backends()) {
+        for (VideoFrameExtractorProvider backend : backends) {
             if (backend.formats().contains(format)
                     && backend.isAvailable()
                     && backend.canDecode(path)) {

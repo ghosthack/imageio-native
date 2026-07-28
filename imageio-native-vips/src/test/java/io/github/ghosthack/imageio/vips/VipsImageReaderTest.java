@@ -1,13 +1,21 @@
 package io.github.ghosthack.imageio.vips;
 
+import io.github.ghosthack.imageio.common.ImageReadParamSupport;
+import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+import io.github.ghosthack.imageio.common.NativeDecodeResult;
 import io.github.ghosthack.imageio.common.TestPixels;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import javax.imageio.ImageReadParam;
+import java.awt.Dimension;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -96,12 +104,99 @@ class VipsImageReaderTest {
         TestPixels.assertColourClose("bottom-right white", WHITE, img.getRGB(6, 6), tol);
     }
 
+    @Test
+    void decodePathAtRequestedRenderSize() throws IOException {
+        assumeVips();
+        Path file = Files.createTempFile("imageio-native-vips-", ".png");
+        try {
+            Files.write(file, loadResource("test8x8.png"));
+
+            BufferedImage image =
+                    VipsNative.decodeFromPath(file.toString(), 4, 2);
+
+            assertEquals(4, image.getWidth());
+            assertEquals(2, image.getHeight());
+            assertEquals(BufferedImage.TYPE_INT_ARGB_PRE, image.getType());
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void spatialDecodeMatchesSharedReference() throws IOException {
+        assumeVips();
+        Path file = Files.createTempFile("imageio-native-vips-", ".png");
+        try {
+            Files.write(file, loadResource("test8x8.png"));
+            ImageReadParam param = new ImageReadParam();
+            param.setSourceRegion(new Rectangle(1, 1, 6, 6));
+            param.setSourceSubsampling(2, 2, 1, 1);
+            NativeDecodeRequest request =
+                    NativeDecodeRequest.from(param, 8, 8);
+
+            BufferedImage reference = ImageReadParamSupport.apply(
+                    VipsNative.decodeFromPath(file.toString()), param);
+            BufferedImage selected =
+                    VipsNative.decodeFromPath(file.toString(), request);
+            BufferedImage result = ImageReadParamSupport.apply(
+                    NativeDecodeResult.spatiallySelected(
+                            selected, request),
+                    param);
+
+            assertImagesEqual(reference, result);
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void combinesNativeRenderAndSpatialSelection() throws IOException {
+        assumeVips();
+        Path file = Files.createTempFile("imageio-native-vips-", ".png");
+        try {
+            Files.write(file, loadResource("test8x8.png"));
+            ImageReadParam param =
+                    ImageReadParamSupport.createDefaultReadParam();
+            param.setSourceRenderSize(new Dimension(6, 6));
+            param.setSourceRegion(new Rectangle(1, 1, 4, 4));
+            param.setSourceSubsampling(2, 2, 0, 0);
+            NativeDecodeRequest request =
+                    NativeDecodeRequest.from(param, 8, 8);
+
+            BufferedImage selected =
+                    VipsNative.decodeFromPath(file.toString(), request);
+            BufferedImage result = ImageReadParamSupport.apply(
+                    NativeDecodeResult.spatiallySelected(
+                            selected, request),
+                    param);
+
+            assertEquals(2, result.getWidth());
+            assertEquals(2, result.getHeight());
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private byte[] loadResource(String name) throws IOException {
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(name)) {
             assertNotNull(is, "Test fixture not found: " + name);
             return is.readAllBytes();
+        }
+    }
+
+    private static void assertImagesEqual(
+            BufferedImage expected, BufferedImage actual) {
+        assertEquals(expected.getWidth(), actual.getWidth());
+        assertEquals(expected.getHeight(), actual.getHeight());
+        for (int y = 0; y < expected.getHeight(); y++) {
+            for (int x = 0; x < expected.getWidth(); x++) {
+                assertEquals(
+                        expected.getRGB(x, y),
+                        actual.getRGB(x, y),
+                        "pixel at " + x + "," + y);
+            }
         }
     }
 }

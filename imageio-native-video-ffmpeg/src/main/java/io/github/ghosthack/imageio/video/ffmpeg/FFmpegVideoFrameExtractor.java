@@ -11,6 +11,7 @@ import io.github.ghosthack.imageio.common.RoutingBackend;
 import io.github.ghosthack.imageio.video.VideoFrameExtractorProvider;
 import io.github.ghosthack.imageio.video.VideoInfo;
 
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
@@ -51,7 +52,101 @@ public class FFmpegVideoFrameExtractor implements VideoFrameExtractorProvider {
     }
 
     @Override
+    public boolean canDecode(Path videoFile) {
+        if (!AVAILABLE || videoFile == null) return false;
+
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment ppFmtCtx = arena.allocate(ValueLayout.ADDRESS);
+            ppFmtCtx.set(ValueLayout.ADDRESS, 0, MemorySegment.NULL);
+            MemorySegment ppCodecCtx = arena.allocate(ValueLayout.ADDRESS);
+            ppCodecCtx.set(ValueLayout.ADDRESS, 0, MemorySegment.NULL);
+            MemorySegment cpath =
+                    arena.allocateFrom(
+                            videoFile.toAbsolutePath().toString(),
+                            StandardCharsets.UTF_8);
+
+            try {
+                if (FFmpeg.avformat_open_input(
+                                ppFmtCtx,
+                                cpath,
+                                MemorySegment.NULL,
+                                MemorySegment.NULL)
+                        < 0) {
+                    return false;
+                }
+
+                MemorySegment fmtCtx =
+                        ppFmtCtx
+                                .get(ValueLayout.ADDRESS, 0)
+                                .reinterpret(AVFormatContext.layout().byteSize());
+                if (FFmpeg.avformat_find_stream_info(
+                                fmtCtx, MemorySegment.NULL)
+                        < 0) {
+                    return false;
+                }
+
+                int streamIdx =
+                        FFmpeg.av_find_best_stream(
+                                fmtCtx,
+                                FFmpeg.AVMEDIA_TYPE_VIDEO(),
+                                -1,
+                                -1,
+                                MemorySegment.NULL,
+                                0);
+                if (streamIdx < 0) return false;
+
+                MemorySegment streams =
+                        AVFormatContext.streams(fmtCtx)
+                                .reinterpret(
+                                        (streamIdx + 1L)
+                                                * ValueLayout.ADDRESS.byteSize());
+                MemorySegment stream =
+                        streams
+                                .getAtIndex(ValueLayout.ADDRESS, streamIdx)
+                                .reinterpret(AVStream.layout().byteSize());
+                MemorySegment codecpar =
+                        AVStream.codecpar(stream)
+                                .reinterpret(
+                                        AVCodecParameters.layout().byteSize());
+                MemorySegment codec =
+                        FFmpeg.avcodec_find_decoder(
+                                AVCodecParameters.codec_id(codecpar));
+                if (MemorySegment.NULL.equals(codec)) return false;
+
+                MemorySegment codecCtx =
+                        FFmpeg.avcodec_alloc_context3(codec);
+                if (MemorySegment.NULL.equals(codecCtx)) return false;
+                ppCodecCtx.set(ValueLayout.ADDRESS, 0, codecCtx);
+
+                if (FFmpeg.avcodec_parameters_to_context(codecCtx, codecpar)
+                        < 0) {
+                    return false;
+                }
+                return FFmpeg.avcodec_open2(
+                                codecCtx, codec, MemorySegment.NULL)
+                        >= 0;
+            } finally {
+                if (ppCodecCtx.get(ValueLayout.ADDRESS, 0).address() != 0) {
+                    FFmpeg.avcodec_free_context(ppCodecCtx);
+                }
+                if (ppFmtCtx.get(ValueLayout.ADDRESS, 0).address() != 0) {
+                    FFmpeg.avformat_close_input(ppFmtCtx);
+                }
+            }
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    @Override
     public BufferedImage extractFrame(Path videoFile, Duration time) throws IOException {
+        return extractFrame(videoFile, time, null);
+    }
+
+    @Override
+    public BufferedImage extractFrame(
+            Path videoFile, Duration time, Dimension renderSize)
+            throws IOException {
         if (!AVAILABLE) throw new IOException("FFmpeg is not available");
 
         try (Arena arena = Arena.ofConfined()) {
@@ -135,21 +230,28 @@ public class FFmpegVideoFrameExtractor implements VideoFrameExtractorProvider {
                 if (width <= 0 || height <= 0)
                     throw new IOException("Invalid frame dimensions: " + width + "x" + height);
 
+                int outputWidth =
+                        renderSize != null ? renderSize.width : width;
+                int outputHeight =
+                        renderSize != null ? renderSize.height : height;
                 swsCtx = FFmpeg.sws_getContext(
                         width, height, frameFormat,
-                        width, height, FFmpeg.AV_PIX_FMT_BGRA(),
+                        outputWidth, outputHeight, FFmpeg.AV_PIX_FMT_BGRA(),
                         FFmpeg.SWS_BILINEAR(),
                         MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL);
                 if (MemorySegment.NULL.equals(swsCtx))
                     throw new IOException("sws_getContext failed");
 
                 long dstBufSize = Math.multiplyExact(
-                        Math.multiplyExact((long) width, height), 4L);
+                        Math.multiplyExact(
+                                (long) outputWidth, outputHeight), 4L);
                 MemorySegment dstBuf = arena.allocate(dstBufSize, 16);
                 MemorySegment dstData = arena.allocate(ValueLayout.ADDRESS, 4);
                 MemorySegment dstLinesize = arena.allocate(ValueLayout.JAVA_INT, 4);
                 dstData.setAtIndex(ValueLayout.ADDRESS, 0, dstBuf);
-                dstLinesize.setAtIndex(ValueLayout.JAVA_INT, 0, Math.multiplyExact(width, 4));
+                dstLinesize.setAtIndex(
+                        ValueLayout.JAVA_INT, 0,
+                        Math.multiplyExact(outputWidth, 4));
 
                 // Use the field-slice accessors. jextract 22's indexed accessors for
                 // array fields are relative to the field layout, not the struct.
@@ -160,7 +262,8 @@ public class FFmpegVideoFrameExtractor implements VideoFrameExtractorProvider {
                 if (scaledRows <= 0) throw new IOException("sws_scale failed: " + scaledRows);
 
                 BufferedImage result = new BufferedImage(
-                        width, height, BufferedImage.TYPE_INT_ARGB_PRE);
+                        outputWidth, outputHeight,
+                        BufferedImage.TYPE_INT_ARGB_PRE);
                 int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
                 for (int i = 0, offset = 0; i < dest.length; i++, offset += 4) {
                     int b = dstBuf.get(ValueLayout.JAVA_BYTE, offset) & 0xFF;
@@ -186,6 +289,11 @@ public class FFmpegVideoFrameExtractor implements VideoFrameExtractorProvider {
         } catch (Throwable t) {
             throw new IOException("FFmpeg frame extraction failed for: " + videoFile, t);
         }
+    }
+
+    @Override
+    public boolean supportsRenderSizeReduction() {
+        return true;
     }
 
     @Override

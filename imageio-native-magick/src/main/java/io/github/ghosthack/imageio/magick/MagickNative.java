@@ -1,6 +1,11 @@
 package io.github.ghosthack.imageio.magick;
 
+import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+import io.github.ghosthack.imageio.common.ImageReadParamSupport;
+
 import javax.imageio.IIOException;
+import java.awt.Dimension;
+import java.awt.Rectangle;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.io.IOException;
@@ -35,8 +40,8 @@ final class MagickNative {
     /** AlphaChannelOption: SetAlphaChannel (ensure alpha exists, opaque if absent) */
     private static final int SetAlphaChannel = 10;
 
-    /** Maximum total pixel count to prevent OOM. */
-    private static final long MAX_PIXELS = 256L * 1024 * 1024;
+    /** FilterType: TriangleFilter (bilinear reconstruction). */
+    private static final int TriangleFilter = 3;
 
     // ── Library loading ─────────────────────────────────────────────────
 
@@ -51,10 +56,12 @@ final class MagickNative {
     private static final MethodHandle DestroyMagickWand;
     private static final MethodHandle MagickReadImage;
     private static final MethodHandle MagickReadImageBlob;
+    private static final MethodHandle MagickPingImage;
     private static final MethodHandle MagickPingImageBlob;
     private static final MethodHandle MagickGetImageWidth;
     private static final MethodHandle MagickGetImageHeight;
     private static final MethodHandle MagickSetImageAlphaChannel;
+    private static final MethodHandle MagickResizeImage;
     private static final MethodHandle MagickExportImagePixels;
     private static final MethodHandle MagickGetException;
     private static final MethodHandle MagickRelinquishMemory;
@@ -83,6 +90,9 @@ final class MagickNative {
             MagickReadImageBlob = downcall("MagickReadImageBlob",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT,
                             ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
+            MagickPingImage = downcall("MagickPingImage",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS));
             MagickPingImageBlob = downcall("MagickPingImageBlob",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT,
                             ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG));
@@ -93,6 +103,11 @@ final class MagickNative {
             MagickSetImageAlphaChannel = downcall("MagickSetImageAlphaChannel",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT,
                             ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
+            MagickResizeImage = downcall("MagickResizeImage",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG,
+                            ValueLayout.JAVA_INT));
             // MagickExportImagePixels(wand, x, y, columns, rows, map, storage, pixels)
             MagickExportImagePixels = downcall("MagickExportImagePixels",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT,
@@ -119,10 +134,12 @@ final class MagickNative {
             DestroyMagickWand = null;
             MagickReadImage = null;
             MagickReadImageBlob = null;
+            MagickPingImage = null;
             MagickPingImageBlob = null;
             MagickGetImageWidth = null;
             MagickGetImageHeight = null;
             MagickSetImageAlphaChannel = null;
+            MagickResizeImage = null;
             MagickExportImagePixels = null;
             MagickGetException = null;
             MagickRelinquishMemory = null;
@@ -196,10 +213,9 @@ final class MagickNative {
             MemorySegment wand = (MemorySegment) NewMagickWand.invokeExact();
             try {
                 MemorySegment cpath = arena.allocateFrom(path, StandardCharsets.UTF_8);
-                // Ping reads header only (no pixel decode)
-                int rc = (int) MagickReadImage.invokeExact(wand, cpath);
+                int rc = (int) MagickPingImage.invokeExact(wand, cpath);
                 if (rc != MagickTrue)
-                    throw new IIOException("ImageMagick read failed for: " + path
+                    throw new IIOException("ImageMagick ping failed for: " + path
                             + " — " + errorMessage(arena, wand));
 
                 int w = (int) (long) MagickGetImageWidth.invokeExact(wand);
@@ -221,7 +237,28 @@ final class MagickNative {
      * Decodes raw image bytes through ImageMagick into a {@code TYPE_INT_ARGB_PRE} BufferedImage.
      */
     static BufferedImage decode(byte[] imageData) throws IOException {
+        return decode(imageData, (Dimension) null);
+    }
+
+    static BufferedImage decode(byte[] imageData, Dimension renderSize)
+            throws IOException {
+        return decode(imageData, renderSize, null);
+    }
+
+    static BufferedImage decode(
+            byte[] imageData, NativeDecodeRequest request)
+            throws IOException {
+        return decode(imageData, request.sourceRenderSize(), request);
+    }
+
+    private static BufferedImage decode(
+            byte[] imageData,
+            Dimension renderSize,
+            NativeDecodeRequest request) throws IOException {
         if (!AVAILABLE) throw new IIOException("ImageMagick is not available");
+        int[] sourceSize = getSize(imageData);
+        ImageReadParamSupport.validateIntermediateDimensions(
+                sourceSize[0], sourceSize[1]);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment wand = (MemorySegment) NewMagickWand.invokeExact();
             try {
@@ -230,7 +267,8 @@ final class MagickNative {
                 if (rc != MagickTrue)
                     throw new IIOException("ImageMagick read failed: " + errorMessage(arena, wand));
 
-                return exportPixels(arena, wand);
+                resize(wand, renderSize);
+                return exportPixels(arena, wand, request);
             } finally {
                 destroyWand(wand);
             }
@@ -245,7 +283,27 @@ final class MagickNative {
      * Decodes an image directly from a file path.
      */
     static BufferedImage decodeFromPath(String path) throws IOException {
+        return decodeFromPath(path, (Dimension) null);
+    }
+
+    static BufferedImage decodeFromPath(String path, Dimension renderSize)
+            throws IOException {
+        return decodeFromPath(path, renderSize, null);
+    }
+
+    static BufferedImage decodeFromPath(
+            String path, NativeDecodeRequest request) throws IOException {
+        return decodeFromPath(path, request.sourceRenderSize(), request);
+    }
+
+    private static BufferedImage decodeFromPath(
+            String path,
+            Dimension renderSize,
+            NativeDecodeRequest request) throws IOException {
         if (!AVAILABLE) throw new IIOException("ImageMagick is not available");
+        int[] sourceSize = getSizeFromPath(path);
+        ImageReadParamSupport.validateIntermediateDimensions(
+                sourceSize[0], sourceSize[1]);
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment wand = (MemorySegment) NewMagickWand.invokeExact();
             try {
@@ -255,7 +313,8 @@ final class MagickNative {
                     throw new IIOException("ImageMagick read failed for: " + path
                             + " — " + errorMessage(arena, wand));
 
-                return exportPixels(arena, wand);
+                resize(wand, renderSize);
+                return exportPixels(arena, wand, request);
             } finally {
                 destroyWand(wand);
             }
@@ -268,57 +327,104 @@ final class MagickNative {
 
     // ── Internal ────────────────────────────────────────────────────────
 
+    private static void resize(MemorySegment wand, Dimension renderSize)
+            throws Throwable {
+        if (renderSize == null) {
+            return;
+        }
+        int rc = (int) MagickResizeImage.invokeExact(
+                wand,
+                (long) renderSize.width,
+                (long) renderSize.height,
+                TriangleFilter);
+        if (rc != MagickTrue) {
+            throw new IIOException("ImageMagick resize failed");
+        }
+    }
+
     /**
      * Exports pixels from the current wand image into a BufferedImage.
      */
     private static BufferedImage exportPixels(Arena arena, MemorySegment wand)
+            throws Throwable {
+        return exportPixels(arena, wand, null);
+    }
+
+    private static BufferedImage exportPixels(
+            Arena arena, MemorySegment wand, NativeDecodeRequest request)
             throws Throwable {
         int w = (int) (long) MagickGetImageWidth.invokeExact(wand);
         int h = (int) (long) MagickGetImageHeight.invokeExact(wand);
         if (w <= 0 || h <= 0)
             throw new IIOException("Invalid image dimensions: " + w + "x" + h);
 
-        long totalPixels = (long) w * h;
-        if (totalPixels > MAX_PIXELS)
-            throw new IIOException("Image too large: " + w + "x" + h + " (" + totalPixels
-                    + " pixels exceeds limit of " + MAX_PIXELS + ")");
+        Rectangle sourceRegion = request != null
+                && request.hasSpatialSelection()
+                ? request.sourceRegion()
+                : new Rectangle(0, 0, w, h);
+        int sourceXSubsampling = request != null
+                ? request.sourceXSubsampling() : 1;
+        int sourceYSubsampling = request != null
+                ? request.sourceYSubsampling() : 1;
+        int outputWidth = request != null
+                && request.hasSpatialSelection()
+                ? request.destinationRegion().width : w;
+        int outputHeight = request != null
+                && request.hasSpatialSelection()
+                ? request.destinationRegion().height : h;
+
+        ImageReadParamSupport.validateIntermediateDimensions(
+                outputWidth, outputHeight);
 
         // Ensure alpha channel exists (opaque if image has no alpha)
         int alphaRc = (int) MagickSetImageAlphaChannel.invokeExact(wand, SetAlphaChannel);
 
         // Export as ARGB, 8-bit per channel
-        long bufSize = totalPixels * 4;
-        MemorySegment pixelBuf = arena.allocate(bufSize);
+        long rowSize = (long) sourceRegion.width * 4;
+        MemorySegment pixelBuf = arena.allocate(rowSize);
         MemorySegment map = arena.allocateFrom("ARGB", StandardCharsets.UTF_8);
 
-        int rc = (int) MagickExportImagePixels.invokeExact(
-                wand, 0L, 0L, (long) w, (long) h,
-                map, CharPixel, pixelBuf);
-        if (rc != MagickTrue)
-            throw new IIOException("MagickExportImagePixels failed: " + errorMessage(arena, wand));
-
-        // Repack ARGB bytes → 0xAARRGGBB int[] for TYPE_INT_ARGB_PRE
-        // MagickExportImagePixels with "ARGB" + CharPixel gives [A,R,G,B] per pixel.
-        // We need to premultiply and pack into ints.
-        BufferedImage result = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
+        BufferedImage result = new BufferedImage(
+                outputWidth, outputHeight, BufferedImage.TYPE_INT_ARGB_PRE);
         int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
 
-        for (int i = 0, off = 0; i < dest.length; i++, off += 4) {
-            int a = pixelBuf.get(ValueLayout.JAVA_BYTE, off) & 0xFF;
-            int r = pixelBuf.get(ValueLayout.JAVA_BYTE, off + 1) & 0xFF;
-            int g = pixelBuf.get(ValueLayout.JAVA_BYTE, off + 2) & 0xFF;
-            int b = pixelBuf.get(ValueLayout.JAVA_BYTE, off + 3) & 0xFF;
+        for (int outputY = 0; outputY < outputHeight; outputY++) {
+            long sourceY =
+                    sourceRegion.y + (long) outputY * sourceYSubsampling;
+            int rc = (int) MagickExportImagePixels.invokeExact(
+                    wand,
+                    (long) sourceRegion.x,
+                    sourceY,
+                    (long) sourceRegion.width,
+                    1L,
+                    map,
+                    CharPixel,
+                    pixelBuf);
+            if (rc != MagickTrue) {
+                throw new IIOException(
+                        "MagickExportImagePixels failed: "
+                                + errorMessage(arena, wand));
+            }
 
-            // Premultiply RGB by alpha
-            if (a == 0) {
-                dest[i] = 0;
-            } else if (a == 255) {
-                dest[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
-            } else {
-                r = (r * a + 127) / 255;
-                g = (g * a + 127) / 255;
-                b = (b * a + 127) / 255;
-                dest[i] = (a << 24) | (r << 16) | (g << 8) | b;
+            for (int outputX = 0; outputX < outputWidth; outputX++) {
+                long off = (long) outputX * sourceXSubsampling * 4;
+                int a = pixelBuf.get(ValueLayout.JAVA_BYTE, off) & 0xFF;
+                int r = pixelBuf.get(ValueLayout.JAVA_BYTE, off + 1) & 0xFF;
+                int g = pixelBuf.get(ValueLayout.JAVA_BYTE, off + 2) & 0xFF;
+                int b = pixelBuf.get(ValueLayout.JAVA_BYTE, off + 3) & 0xFF;
+
+                if (a == 0) {
+                    dest[outputY * outputWidth + outputX] = 0;
+                } else if (a == 255) {
+                    dest[outputY * outputWidth + outputX] =
+                            0xFF000000 | (r << 16) | (g << 8) | b;
+                } else {
+                    r = (r * a + 127) / 255;
+                    g = (g * a + 127) / 255;
+                    b = (b * a + 127) / 255;
+                    dest[outputY * outputWidth + outputX] =
+                            (a << 24) | (r << 16) | (g << 8) | b;
+                }
             }
         }
 

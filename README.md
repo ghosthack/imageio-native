@@ -38,6 +38,25 @@ All standard lookup methods work: `getImageReadersByFormatName`, `getImageReader
 
 The `imageio-native` aggregator pulls in both platform modules and auto-selects at runtime. You can also depend on `imageio-native-apple` or `imageio-native-windows` directly.
 
+### `ImageReadParam`
+
+Native readers implement source regions, subsampling and subsampling offsets,
+destination images and offsets, source and destination bands, destination
+types, and source render sizes. Progressive-pass selection is not silently
+ignored: requesting it fails with `IIOException`, because the native decoder
+APIs do not expose compatible progressive passes.
+
+Source render sizing is pushed into Apple, WIC, libvips, ImageMagick, AVFoundation,
+and FFmpeg native processing. libvips and ImageMagick also crop before
+materializing the Java image; the shared layer applies any remaining operations
+with the same normalized ImageIO regions for every backend.
+
+Readers reject a required native or Java intermediate larger than 512 MiB
+instead of unexpectedly allocating it. This includes full-source ImageMagick
+processing and the worst-case thumbnail surfaces used for exact Apple/WIC
+render sizes. Override the limit in bytes with
+`-Dimageio.native.maxIntermediateBytes=<bytes>`.
+
 <details>
 <summary>Gradle</summary>
 
@@ -392,9 +411,12 @@ swift scripts/generate-video-fixtures.swift      # video fixtures (macOS AVFound
 ## Releasing
 
 1. Set the release version in `pom.xml` (remove `-SNAPSHOT`)
-2. Commit, push, and merge via PR
-3. CI detects the version change, creates a GitHub release, and deploys to Maven Central
-4. Publish the deployment at https://central.sonatype.com/publishing/deployments
+2. Commit, push, and merge via PR; wait for CI to pass on the release commit
+3. Publish a non-prerelease GitHub Release tagged `v<version>` and targeting that commit
+4. The release workflow validates the tag, reruns CI at the tag, signs the artifacts,
+   and publishes them to Maven Central
+
+Maven Central publication is automatic; no separate portal approval is required.
 
 ## License
 

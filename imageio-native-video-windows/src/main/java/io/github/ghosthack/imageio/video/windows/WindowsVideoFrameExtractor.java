@@ -41,6 +41,19 @@ public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
     }
 
     @Override
+    public boolean canDecode(Path videoFile) {
+        if (!isAvailable() || videoFile == null) return false;
+
+        try (MediaFoundation.FrameStream ignored =
+                     MediaFoundation.openVideo(
+                             videoFile.toAbsolutePath().toString())) {
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    @Override
     public BufferedImage extractFrame(Path videoFile, Duration time) throws IOException {
         Objects.requireNonNull(videoFile, "videoFile");
         Objects.requireNonNull(time, "time");
@@ -53,11 +66,9 @@ public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
 
         try (Arena arena = Arena.ofConfined()) {
             String path = videoFile.toAbsolutePath().toString();
-            io.github.ghosthack.panama.media.mediafoundation.VideoInfo info =
-                    MediaFoundation.getVideoInfo(arena, path);
             DecodedImage<PixelFormat> frame = MediaFoundation.extractFrame(
                     arena, path, time.toMillis());
-            return toBufferedImage(frame, info.width(), info.height());
+            return toBufferedImage(frame);
         } catch (IOException e) {
             throw e;
         } catch (RuntimeException e) {
@@ -90,7 +101,7 @@ public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
     }
 
     private static BufferedImage toBufferedImage(
-            DecodedImage<PixelFormat> image, int displayWidth, int displayHeight)
+            DecodedImage<PixelFormat> image)
             throws IIOException {
         if (image.format() != PixelFormat.BGRA) {
             throw new IIOException("Expected BGRA video pixels, got " + image.format());
@@ -99,37 +110,20 @@ public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
             throw new IIOException("Invalid BGRA video stride: " + image.stride());
         }
 
-        /*
-         * The Windows video processor can negotiate a minimum RGB32 canvas for
-         * very small sources (for example 192x96 for a 16x16 clip), leaving the
-         * source frame at the upper-left. Normalize that padded canvas back to
-         * the native display dimensions reported by the source media type.
-         *
-         * A 90/270-degree rotated frame has swapped dimensions; do not crop it
-         * to the unrotated metadata dimensions.
-         */
-        boolean rotatedSize = image.width() == displayHeight
-                && image.height() == displayWidth;
-        boolean paddedCanvas = !rotatedSize
-                && (image.width() != displayWidth || image.height() != displayHeight)
-                && displayWidth > 0 && displayHeight > 0
-                && image.width() >= displayWidth && image.height() >= displayHeight;
-        int width = paddedCanvas ? displayWidth : image.width();
-        int height = paddedCanvas ? displayHeight : image.height();
-
         BufferedImage result = new BufferedImage(
-                width, height, BufferedImage.TYPE_INT_ARGB_PRE);
+                image.width(), image.height(),
+                BufferedImage.TYPE_INT_ARGB_PRE);
         int[] dest = ((DataBufferInt) result.getRaster().getDataBuffer()).getData();
         MemorySegment pixels = image.pixels();
 
-        if (!paddedCanvas && image.stride() == image.width() * 4) {
+        if (image.stride() == image.width() * 4) {
             MemorySegment.copy(pixels, ValueLayout.JAVA_INT, 0, dest, 0, dest.length);
         } else {
-            for (int y = 0; y < height; y++) {
+            for (int y = 0; y < image.height(); y++) {
                 MemorySegment row = pixels.asSlice((long) y * image.stride());
                 MemorySegment.copy(
                         row, ValueLayout.JAVA_INT, 0,
-                        dest, y * width, width);
+                        dest, y * image.width(), image.width());
             }
         }
         return result;

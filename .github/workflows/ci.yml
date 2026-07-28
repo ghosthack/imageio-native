@@ -6,12 +6,23 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to verify
+        required: false
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   build-macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -31,6 +42,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -46,84 +59,23 @@ jobs:
       - name: Test example-consumer
         run: mvn -B -f example-consumer/pom.xml clean test
 
-  release:
-    needs: [build-macos, build-windows]
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+  build-linux:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    outputs:
-      changed: ${{ steps.version.outputs.changed }}
-
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 2
-
-      - name: Check for version change
-        id: version
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          CURRENT=$(grep -m1 '<version>' pom.xml | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
-          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
-
-          # workflow_dispatch: release if tag doesn't already exist
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if gh release view "v${CURRENT}" > /dev/null 2>&1; then
-              echo "Release v${CURRENT} already exists — will deploy only"
-            fi
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            PREVIOUS=$(git show HEAD~1:pom.xml | grep -m1 '<version>' | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
-            echo "previous=$PREVIOUS" >> "$GITHUB_OUTPUT"
-            if [ "$CURRENT" != "$PREVIOUS" ] && [[ "$CURRENT" != *SNAPSHOT* ]]; then
-              echo "changed=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "changed=false" >> "$GITHUB_OUTPUT"
-            fi
-          fi
-
-      - name: Create GitHub release
-        if: steps.version.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION=${{ steps.version.outputs.current }}
-          # Skip if release already exists (e.g. workflow_dispatch re-run)
-          if gh release view "v${VERSION}" > /dev/null 2>&1; then
-            echo "Release v${VERSION} already exists — skipping creation"
-          else
-            gh release create "v${VERSION}" \
-              --target main \
-              --title "${VERSION}" \
-              --generate-notes
-          fi
-
-  deploy:
-    needs: release
-    if: needs.release.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up JDK 26
-        uses: actions/setup-java@v5
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-java@v5
         with:
-          java-version: 26
           distribution: temurin
+          java-version: 26
           cache: maven
-          server-id: central
-          server-username: MAVEN_CENTRAL_USERNAME
-          server-password: MAVEN_CENTRAL_PASSWORD
-          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-passphrase: GPG_PASSPHRASE
 
-      - name: Deploy to Maven Central
-        run: mvn -B clean deploy -P release
-        env:
-          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
-          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Build and test
+        run: mvn -B clean test
+
+      - name: Install to local repo
+        run: mvn -B install -DskipTests
+
+      - name: Test example-consumer
+        run: mvn -B -f example-consumer/pom.xml clean test

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
@@ -63,7 +64,15 @@ class AppleVideoFrameExtractorTest {
         return extractResource("test-video-3s.mov");
     }
 
+    @Test
+    void capabilityProbeRequiresPlayableVideoTrack() throws Exception {
+        AppleVideoFrameExtractor extractor = new AppleVideoFrameExtractor();
+        Path invalid = tempDir.resolve("invalid.mp4");
+        Files.writeString(invalid, "not a playable video");
 
+        assertTrue(extractor.canDecode(testVideo()));
+        assertFalse(extractor.canDecode(invalid));
+    }
 
     @Test
     void extractFrameAtZero() throws Exception {
@@ -86,6 +95,21 @@ class AppleVideoFrameExtractorTest {
         assertEquals(16, frame.getHeight());
         int pixel = frame.getRGB(8, 8);
         TestPixels.assertColourClose("Green frame at t=1s", GREEN, pixel, TOLERANCE);
+    }
+
+    @Test
+    void extractFrameAtRequestedRenderSize() throws Exception {
+        AppleVideoFrameExtractor extractor = new AppleVideoFrameExtractor();
+        BufferedImage frame = extractor.extractFrame(
+                testVideo(), Duration.ZERO, new Dimension(8, 4));
+
+        assertEquals(8, frame.getWidth());
+        assertEquals(4, frame.getHeight());
+        TestPixels.assertColourClose(
+                "Reduced red frame",
+                RED,
+                frame.getRGB(4, 2),
+                TOLERANCE);
     }
 
     @Test
