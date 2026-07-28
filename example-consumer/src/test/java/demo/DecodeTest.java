@@ -76,8 +76,18 @@ class DecodeTest {
             Iterator<ImageReader> readers = ImageIO.getImageReaders(imageInput);
             assertTrue(readers.hasNext());
             ImageReader reader = readers.next();
-            assertTrue(reader.getClass().getName().startsWith("io.github.ghosthack"),
-                    "The installed capable backend should own PNG");
+            if (ImageioNative.isAvailable()) {
+                assertTrue(
+                        reader.getClass().getName().startsWith(
+                                "io.github.ghosthack"),
+                        "The installed capable backend should own PNG");
+            } else {
+                assertFalse(
+                        reader.getClass().getName().startsWith(
+                                "io.github.ghosthack"),
+                        "Without a native still-image backend, host ImageIO "
+                                + "should own PNG");
+            }
             reader.dispose();
         }
     }
@@ -86,8 +96,17 @@ class DecodeTest {
 
     @Test
     void directApiAvailable() {
-        assertTrue(ImageioNative.isAvailable(),
-                "ImageioNative should be available on this platform");
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (os.contains("mac") || os.contains("windows")) {
+            assertTrue(
+                    ImageioNative.isAvailable(),
+                    "ImageioNative should be available on " + os);
+        } else {
+            assertFalse(
+                    ImageioNative.isAvailable(),
+                    "The Apple/Windows aggregator should remain unavailable "
+                            + "on " + os);
+        }
     }
 
     // ── Direct API: format and suffix queries ───────────────────────────
@@ -96,6 +115,10 @@ class DecodeTest {
     void directApiActiveFormats() {
         Set<String> formats = ImageioNative.activeFormats();
         assertNotNull(formats);
+        if (!ImageioNative.isAvailable()) {
+            assertTrue(formats.isEmpty());
+            return;
+        }
         assertFalse(formats.isEmpty());
         // The platform backend declares HEIC/AVIF/WebP candidates.
         assertTrue(formats.contains("HEIC") || formats.contains("heic"),
@@ -106,6 +129,10 @@ class DecodeTest {
     void directApiActiveSuffixes() {
         Set<String> suffixes = ImageioNative.activeSuffixes();
         assertNotNull(suffixes);
+        if (!ImageioNative.isAvailable()) {
+            assertTrue(suffixes.isEmpty());
+            return;
+        }
         assertTrue(suffixes.contains("heic"), "Should contain heic suffix");
         assertTrue(suffixes.contains("avif"), "Should contain avif suffix");
         assertTrue(suffixes.contains("webp"), "Should contain webp suffix");
