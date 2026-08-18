@@ -66,7 +66,7 @@
         <maven.compiler.release>26</maven.compiler.release>
         <junit.version>6.1.2</junit.version>
         <panama-media.version>0.1.1</panama-media.version>
-        <ffmpeg-ffm.version>8.1.2-0.3.2</ffmpeg-ffm.version>
+        <ffmpeg-ffm.version>8.1.2-0.3.5</ffmpeg-ffm.version>
     </properties>
 
     <dependencyManagement>
