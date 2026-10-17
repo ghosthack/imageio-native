@@ -30,13 +30,13 @@ jobs:
           cache: maven
 
       - name: Build and test
-        run: mvn -B clean test
+        run: ./mvnw -B clean test
 
       - name: Install to local repo
-        run: mvn -B install -DskipTests
+        run: ./mvnw -B install -DskipTests
 
       - name: Test example-consumer
-        run: mvn -B -f example-consumer/pom.xml clean test
+        run: ./mvnw -B -f example-consumer/pom.xml clean test
 
   build-windows:
     runs-on: windows-latest
@@ -51,13 +51,16 @@ jobs:
           cache: maven
 
       - name: Build and test
-        run: mvn -B clean test
+        shell: bash
+        run: ./mvnw -B clean test
 
       - name: Install to local repo
-        run: mvn -B install -DskipTests
+        shell: bash
+        run: ./mvnw -B install -DskipTests
 
       - name: Test example-consumer
-        run: mvn -B -f example-consumer/pom.xml clean test
+        shell: bash
+        run: ./mvnw -B -f example-consumer/pom.xml clean test
 
   build-linux:
     runs-on: ubuntu-latest
@@ -72,10 +75,10 @@ jobs:
           cache: maven
 
       - name: Build and test
-        run: mvn -B clean test
+        run: ./mvnw -B clean test
 
       - name: Install to local repo
-        run: mvn -B install -DskipTests
+        run: ./mvnw -B install -DskipTests
 
       - name: Test example-consumer
-        run: mvn -B -f example-consumer/pom.xml clean test
+        run: ./mvnw -B -f example-consumer/pom.xml clean test
