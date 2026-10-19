@@ -18,7 +18,7 @@ Add the dependency:
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 </dependency>
 ```
 
@@ -26,7 +26,7 @@ Add the dependency:
 <summary>Gradle</summary>
 
 ```kotlin
-implementation("io.github.ghosthack:imageio-native:2.0.0")
+implementation("io.github.ghosthack:imageio-native:2.1.0")
 ```
 
 </details>
@@ -344,7 +344,7 @@ The `imageio-native-vips` module is an optional backend that delegates to [libvi
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-vips</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 </dependency>
 ```
 
@@ -373,7 +373,7 @@ The `imageio-native-magick` module is an optional backend that delegates to [Ima
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-magick</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 </dependency>
 ```
 
@@ -400,7 +400,7 @@ This means `ImageIO.read(new File("clip.mp4"))` works exactly like `ImageIO.read
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-video</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 </dependency>
 ```
 
@@ -451,7 +451,7 @@ on Linux.
 <dependency>
     <groupId>io.github.ghosthack</groupId>
     <artifactId>imageio-native-video-ffmpeg</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
 </dependency>
 ```
 
