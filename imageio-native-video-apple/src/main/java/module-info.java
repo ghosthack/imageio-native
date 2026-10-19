@@ -1,6 +1,8 @@
 module io.github.ghosthack.imageio.video.apple {
     requires transitive io.github.ghosthack.imageio.video.common;
-    requires io.github.ghosthack.imageio.apple;
+    requires io.github.ghosthack.panama.media.core;
+    requires io.github.ghosthack.panama.media.corefoundation;
+    requires io.github.ghosthack.panama.media.avfoundation;
 
     exports io.github.ghosthack.imageio.video.apple;
 

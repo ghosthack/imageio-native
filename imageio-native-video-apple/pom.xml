@@ -27,8 +27,8 @@
         </dependency>
         <dependency>
             <groupId>io.github.ghosthack</groupId>
-            <artifactId>imageio-native-apple</artifactId>
-            <version>${project.version}</version>
+            <artifactId>panama-media-avfoundation</artifactId>
+            <version>${panama-media.version}</version>
         </dependency>
         <dependency>
             <groupId>io.github.ghosthack</groupId>

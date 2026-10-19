@@ -1,5 +1,7 @@
 module io.github.ghosthack.imageio.apple {
     requires transitive io.github.ghosthack.imageio.common;
+    requires io.github.ghosthack.panama.media.corefoundation;
+    requires io.github.ghosthack.panama.media.cgimage;
 
     exports io.github.ghosthack.imageio.apple;
 

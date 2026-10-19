@@ -44,7 +44,7 @@ a modular macOS application can launch with:
 
 ```sh
 java --module-path lib \
-     --enable-native-access=io.github.ghosthack.imageio.apple \
+     --enable-native-access=io.github.ghosthack.panama.media.corefoundation,io.github.ghosthack.panama.media.cgimage \
      --module com.example.app/com.example.Main
 ```
 
@@ -120,8 +120,8 @@ rather than to every class-path dependency:
 
 | Backend | `--enable-native-access` value |
 |---|---|
-| Apple images | `io.github.ghosthack.imageio.apple` |
-| Apple video | `io.github.ghosthack.imageio.apple,io.github.ghosthack.imageio.video.apple` |
+| Apple images | `io.github.ghosthack.panama.media.corefoundation,io.github.ghosthack.panama.media.cgimage` |
+| Apple video | `io.github.ghosthack.panama.media.corefoundation,io.github.ghosthack.panama.media.avfoundation` |
 | Windows images | `io.github.ghosthack.panama.media.core,io.github.ghosthack.panama.media.comruntime,io.github.ghosthack.panama.media.wic` |
 | Windows video | `io.github.ghosthack.panama.media.core,io.github.ghosthack.panama.media.comruntime,io.github.ghosthack.panama.media.mediafoundation` |
 | libvips | `io.github.ghosthack.imageio.vips` |
@@ -431,10 +431,11 @@ VideoInfo info = VideoFrameExtractor.getInfo(Path.of("clip.mp4"));
 | `imageio-native-video-windows` | Windows 10+ | Media Foundation (IMFSourceReader) | Media Foundation-supported containers |
 | `imageio-native-video-ffmpeg` | macOS ARM64, Windows x64, Linux x64 (optional) | Bundled FFmpeg 8.1.2 via `ffmpeg-ffm` | All bundled FFmpeg-supported containers |
 
-The Windows still-image and video backends use the published
-[`panama-media`](https://github.com/ghosthack/panama-media) WIC and Media
-Foundation bindings. Codec and container support ultimately depends on the
-media components installed in Windows.
+The platform still-image and video backends use the published
+[`panama-media`](https://github.com/ghosthack/panama-media) bindings: CGImage
+(ImageIO) and AVFoundation on macOS, WIC and Media Foundation on Windows.
+Codec and container support ultimately depends on the media components
+installed in the operating system.
 
 ### FFmpeg video backend
 
@@ -478,8 +479,8 @@ Backend ImageReader         one decode attempt, lazy decode + cache
     ▼
 ┌─────────────────────┬──────────────────────────────┐
 │ macOS               │ Windows                      │
-│ AppleNative         │ panama-media WIC             │
-│ Panama downcalls    │ shared COM/FFM bindings      │
+│ panama-media        │ panama-media WIC             │
+│   CGImage bindings  │ shared COM/FFM bindings      │
 │ CoreGraphics +      │ ole32 + windowscodecs        │
 │   ImageIO.framework │ IWICImagingFactory →         │
 │ CGImageSource →     │   IWICStream → Decoder →     │
