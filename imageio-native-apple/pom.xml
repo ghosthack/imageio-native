@@ -28,6 +28,11 @@
         </dependency>
         <dependency>
             <groupId>io.github.ghosthack</groupId>
+            <artifactId>panama-media-cgimage</artifactId>
+            <version>${panama-media.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.ghosthack</groupId>
             <artifactId>imageio-native-common</artifactId>
             <version>${project.version}</version>
             <type>test-jar</type>

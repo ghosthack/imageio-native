@@ -1,26 +1,30 @@
 package io.github.ghosthack.imageio.apple;
 
 import io.github.ghosthack.imageio.common.ImageReadParamSupport;
+import io.github.ghosthack.panama.media.cgimage.CGImageSource;
+import io.github.ghosthack.panama.media.corefoundation.CoreFoundation;
 
 import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.lang.foreign.*;
-import java.lang.invoke.MethodHandle;
 
 /**
- * Panama (FFM) bindings to macOS CoreFoundation, CoreGraphics, and ImageIO frameworks.
+ * Decodes images through Apple's CGImageSource API, which supports HEIC, AVIF,
+ * WEBP, and many other formats through the Apple Media Engine.
  * <p>
- * Provides the native bridge to decode images via Apple's CGImageSource API,
- * which supports HEIC, AVIF, WEBP, and many other formats through the Apple Media Engine.
+ * The native calls go through the {@code panama-media-corefoundation} and
+ * {@code panama-media-cgimage} bindings; this class owns the decode policy
+ * (pixel limit, render-size bound, orientation handling).
  * <p>
  * EXIF orientation is applied automatically: {@link #decode} uses
  * {@code CGImageSourceCreateThumbnailAtIndex} with
  * {@code kCGImageSourceCreateThumbnailWithTransform = true}, and {@link #getSize}
  * reads the orientation property to return display-oriented dimensions.
  * <p>
- * Requires native access for the containing module
- * ({@code io.github.ghosthack.imageio.apple}), or {@code ALL-UNNAMED} when
- * used on the class path.
+ * Requires native access for {@code io.github.ghosthack.panama.media.core},
+ * {@code io.github.ghosthack.panama.media.corefoundation} and
+ * {@code io.github.ghosthack.panama.media.cgimage}, or {@code ALL-UNNAMED}
+ * when used on the class path.
  * Only functional on macOS; all entry points return failure gracefully on other OSes.
  */
 final class AppleNative {
@@ -29,8 +33,23 @@ final class AppleNative {
 
     // ── OS guard ────────────────────────────────────────────────────────
 
-    static final boolean IS_MACOS = System.getProperty("os.name", "")
+    static final boolean IS_MACOS =
+            io.github.ghosthack.panama.media.cgimage.ImageIO.isAvailable();
+
+    private static final boolean ON_MACOS = System.getProperty("os.name", "")
             .toLowerCase(java.util.Locale.ROOT).contains("mac");
+
+    /**
+     * Explains why decoding is unavailable: not macOS, or macOS where the
+     * panama-media bindings could not load (typically missing native access).
+     */
+    static String unavailableMessage(String offMacMessage) {
+        return ON_MACOS
+                ? "Apple ImageIO bindings failed to load; grant native access to "
+                        + "io.github.ghosthack.panama.media.corefoundation and "
+                        + "io.github.ghosthack.panama.media.cgimage"
+                : offMacMessage;
+    }
 
     /**
      * Maximum number of pixels (width * height) we are willing to decode.
@@ -38,190 +57,6 @@ final class AppleNative {
      * Default: 256 megapixels (e.g. 16384 x 16384).
      */
     static final long MAX_PIXELS = Long.getLong("imageio.native.maxPixels", 256L * 1024 * 1024);
-
-    // ── Constants ───────────────────────────────────────────────────────
-
-    /** kCFNumberIntType = 9 (C {@code int}, 32-bit signed). */
-    static final int kCFNumberIntType = 9;
-
-    // ── Framework loading and method handles ────────────────────────────
-    // Load via System.load so dlopen resolves from the dyld shared cache
-    // (framework files may not exist on disk on macOS 11+).
-    // Guarded by IS_MACOS so this class can be loaded safely on Windows/Linux.
-
-    private static final Linker LINKER = Linker.nativeLinker();
-
-    private static final SymbolLookup LOOKUP;
-
-    // ── CoreFoundation handles ──────────────────────────────────────────
-
-    private static final MethodHandle CFDataCreateWithBytesNoCopy;
-    private static final MethodHandle CFRelease;
-    private static final MethodHandle CFDictionaryCreate;
-    private static final MethodHandle CFDictionaryGetValue;
-    private static final MethodHandle CFNumberCreate;
-    private static final MethodHandle CFNumberGetValue;
-
-    // ── CoreFoundation constant symbols ─────────────────────────────────
-
-    private static final MemorySegment kCFAllocatorNull;
-    private static final MemorySegment kCFBooleanTrue;
-    private static final MemorySegment kCFTypeDictionaryKeyCallBacks;   // struct, not pointer-to-pointer
-    private static final MemorySegment kCFTypeDictionaryValueCallBacks; // struct, not pointer-to-pointer
-
-    // ── ImageIO handles ─────────────────────────────────────────────────
-
-    private static final MethodHandle CGImageSourceCreateWithData;
-    private static final MethodHandle CGImageSourceCreateWithURL;
-    private static final MethodHandle CGImageSourceGetStatus;
-    private static final MethodHandle CGImageSourceCopyPropertiesAtIndex;
-    private static final MethodHandle CGImageSourceCreateThumbnailAtIndex;
-
-    // ── CFURL handles ───────────────────────────────────────────────────
-
-    private static final MethodHandle CFStringCreateWithCString;
-    private static final MethodHandle CFURLCreateWithFileSystemPath;
-
-    /** kCFStringEncodingUTF8 */
-    private static final int kCFStringEncodingUTF8 = 0x08000100;
-
-    /** kCFURLPOSIXPathStyle */
-    private static final int kCFURLPOSIXPathStyle = 0;
-
-    // ── ImageIO property key symbols (CFStringRef constants) ────────────
-
-    private static final MemorySegment kCGImagePropertyPixelWidth;
-    private static final MemorySegment kCGImagePropertyPixelHeight;
-    private static final MemorySegment kCGImagePropertyOrientation;
-    private static final MemorySegment kCGImageSourceCreateThumbnailFromImageAlways;
-    private static final MemorySegment kCGImageSourceCreateThumbnailWithTransform;
-    private static final MemorySegment kCGImageSourceThumbnailMaxPixelSize;
-
-
-
-    static {
-        if (IS_MACOS) {
-            System.load("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation");
-            System.load("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics");
-            System.load("/System/Library/Frameworks/ImageIO.framework/ImageIO");
-            LOOKUP = SymbolLookup.loaderLookup();
-
-            // ── CoreFoundation ──────────────────────────────────────────
-            CFDataCreateWithBytesNoCopy = downcall("CFDataCreateWithBytesNoCopy",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
-            CFRelease = downcall("CFRelease",
-                    FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
-            CFDictionaryCreate = downcall("CFDictionaryCreate",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS,
-                            ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-            CFDictionaryGetValue = downcall("CFDictionaryGetValue",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-            CFNumberCreate = downcall("CFNumberCreate",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
-            CFNumberGetValue = downcall("CFNumberGetValue",
-                    FunctionDescriptor.of(ValueLayout.JAVA_BOOLEAN, ValueLayout.ADDRESS,
-                            ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
-
-            kCFAllocatorNull          = loadConstPtr("kCFAllocatorNull");
-            kCFBooleanTrue            = loadConstPtr("kCFBooleanTrue");
-            // These are struct values (not pointer-to-pointer) — use the symbol address directly
-            kCFTypeDictionaryKeyCallBacks   = loadSymbolAddr("kCFTypeDictionaryKeyCallBacks");
-            kCFTypeDictionaryValueCallBacks = loadSymbolAddr("kCFTypeDictionaryValueCallBacks");
-
-            // ── CFURL helpers ───────────────────────────────────────────
-            CFStringCreateWithCString = downcall("CFStringCreateWithCString",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
-            CFURLCreateWithFileSystemPath = downcall("CFURLCreateWithFileSystemPath",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_BOOLEAN));
-
-            // ── ImageIO ─────────────────────────────────────────────────
-            CGImageSourceCreateWithData = downcall("CGImageSourceCreateWithData",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-            CGImageSourceCreateWithURL = downcall("CGImageSourceCreateWithURL",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-            CGImageSourceGetStatus = downcall("CGImageSourceGetStatus",
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
-            CGImageSourceCopyPropertiesAtIndex = downcall("CGImageSourceCopyPropertiesAtIndex",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
-            CGImageSourceCreateThumbnailAtIndex = downcall("CGImageSourceCreateThumbnailAtIndex",
-                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
-
-            kCGImagePropertyPixelWidth  = loadConstPtr("kCGImagePropertyPixelWidth");
-            kCGImagePropertyPixelHeight = loadConstPtr("kCGImagePropertyPixelHeight");
-            kCGImagePropertyOrientation = loadConstPtr("kCGImagePropertyOrientation");
-            kCGImageSourceCreateThumbnailFromImageAlways = loadConstPtr("kCGImageSourceCreateThumbnailFromImageAlways");
-            kCGImageSourceCreateThumbnailWithTransform   = loadConstPtr("kCGImageSourceCreateThumbnailWithTransform");
-            kCGImageSourceThumbnailMaxPixelSize          = loadConstPtr("kCGImageSourceThumbnailMaxPixelSize");
-
-        } else {
-            LOOKUP = null;
-            CFDataCreateWithBytesNoCopy = null;
-            CFRelease = null;
-            CFDictionaryCreate = null;
-            CFDictionaryGetValue = null;
-            CFNumberCreate = null;
-            CFNumberGetValue = null;
-            kCFAllocatorNull = null;
-            kCFBooleanTrue = null;
-            kCFTypeDictionaryKeyCallBacks = null;
-            kCFTypeDictionaryValueCallBacks = null;
-            CFStringCreateWithCString = null;
-            CFURLCreateWithFileSystemPath = null;
-            CGImageSourceCreateWithData = null;
-            CGImageSourceCreateWithURL = null;
-            CGImageSourceGetStatus = null;
-            CGImageSourceCopyPropertiesAtIndex = null;
-            CGImageSourceCreateThumbnailAtIndex = null;
-            kCGImagePropertyPixelWidth = null;
-            kCGImagePropertyPixelHeight = null;
-            kCGImagePropertyOrientation = null;
-            kCGImageSourceCreateThumbnailFromImageAlways = null;
-            kCGImageSourceCreateThumbnailWithTransform = null;
-            kCGImageSourceThumbnailMaxPixelSize = null;
-
-        }
-    }
-
-    static final int kCGImageStatusUnknownType = -3;
-    static final int kCGImageStatusIncomplete  = -1;
-
-    // ── Helpers: symbol loading ─────────────────────────────────────────
-
-    private static MethodHandle downcall(String name, FunctionDescriptor fd) {
-        MemorySegment addr = LOOKUP.find(name)
-                .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: " + name));
-        return LINKER.downcallHandle(addr, fd);
-    }
-
-    /** Dereferences a global constant pointer (e.g. {@code extern const CFStringRef kFoo}). */
-    private static MemorySegment loadConstPtr(String name) {
-        MemorySegment sym = LOOKUP.find(name)
-                .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: " + name));
-        return sym.reinterpret(ValueLayout.ADDRESS.byteSize()).get(ValueLayout.ADDRESS, 0);
-    }
-
-    /** Returns the raw symbol address (for struct-valued globals like callback structs). */
-    private static MemorySegment loadSymbolAddr(String name) {
-        return LOOKUP.find(name)
-                .orElseThrow(() -> new UnsatisfiedLinkError("Symbol not found: " + name));
-    }
-
-    // ── Helper: release a non-NULL native reference ─────────────────────
-
-    static void release(MemorySegment ref) {
-        if (ref != null && !MemorySegment.NULL.equals(ref)) {
-            try {
-                CFRelease.invokeExact(ref);
-            } catch (Throwable ignored) { /* invokeExact signature; native release cannot throw */ }
-        }
-    }
 
     // ── Helper: read an int property from a CFDictionary ────────────────
 
@@ -231,15 +66,14 @@ final class AppleNative {
      */
     private static int dictGetInt(MemorySegment dict, MemorySegment key, int defaultValue) {
         try {
-            MemorySegment val = (MemorySegment) CFDictionaryGetValue.invokeExact(dict, key);
+            MemorySegment val = CoreFoundation.cfDictionaryGetValue(dict, key);
             if (MemorySegment.NULL.equals(val)) return defaultValue;
-            // val is a CFNumber — extract as kCFNumberIntType (9)
             try (Arena a = Arena.ofConfined()) {
                 MemorySegment buf = a.allocate(ValueLayout.JAVA_INT);
-                boolean ok = (boolean) CFNumberGetValue.invokeExact(val, kCFNumberIntType, buf);
-                return ok ? buf.get(ValueLayout.JAVA_INT, 0) : defaultValue;
+                return CoreFoundation.cfNumberGetInt(val, buf)
+                        ? buf.get(ValueLayout.JAVA_INT, 0) : defaultValue;
             }
-        } catch (Throwable t) {
+        } catch (RuntimeException e) {
             return defaultValue;
         }
     }
@@ -255,56 +89,19 @@ final class AppleNative {
      * </ul>
      * Caller must release the returned dictionary.
      */
-    private static MemorySegment createThumbnailOptions(Arena arena, int maxDim) throws Throwable {
-        // Create CFNumber for max pixel size
-        MemorySegment sizePtr = arena.allocate(ValueLayout.JAVA_INT);
-        sizePtr.set(ValueLayout.JAVA_INT, 0, maxDim);
-        MemorySegment cfMaxSize = (MemorySegment) CFNumberCreate.invokeExact(
-                MemorySegment.NULL, kCFNumberIntType, sizePtr);
-
+    private static MemorySegment createThumbnailOptions(Arena arena, int maxDim) {
+        MemorySegment cfMaxSize = CoreFoundation.cfNumberCreateInt(arena, maxDim);
         try {
-            // Build key and value arrays (3 entries)
-            MemorySegment keys = arena.allocate(ValueLayout.ADDRESS, 3);
-            MemorySegment values = arena.allocate(ValueLayout.ADDRESS, 3);
-
-            keys.setAtIndex(ValueLayout.ADDRESS, 0, kCGImageSourceCreateThumbnailFromImageAlways);
-            keys.setAtIndex(ValueLayout.ADDRESS, 1, kCGImageSourceCreateThumbnailWithTransform);
-            keys.setAtIndex(ValueLayout.ADDRESS, 2, kCGImageSourceThumbnailMaxPixelSize);
-
-            values.setAtIndex(ValueLayout.ADDRESS, 0, kCFBooleanTrue);
-            values.setAtIndex(ValueLayout.ADDRESS, 1, kCFBooleanTrue);
-            values.setAtIndex(ValueLayout.ADDRESS, 2, cfMaxSize);
-
-            return (MemorySegment) CFDictionaryCreate.invokeExact(
-                    MemorySegment.NULL, keys, values, 3L,
-                    kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks);
+            MemorySegment yes = CoreFoundation.kCFBooleanTrue();
+            return CoreFoundation.cfDictionaryCreate(arena,
+                    new MemorySegment[]{
+                            CGImageSource.kCreateThumbnailFromImageAlways(),
+                            CGImageSource.kCreateThumbnailWithTransform(),
+                            CGImageSource.kThumbnailMaxPixelSize()},
+                    new MemorySegment[]{yes, yes, cfMaxSize});
         } finally {
-            release(cfMaxSize);
+            CoreFoundation.cfRelease(cfMaxSize);
         }
-    }
-
-    // ── Helper: create CGImageSource from a file path ────────────────
-
-    /**
-     * Creates a CFString from a Java string (UTF-8 C-string).
-     * Caller must release the returned CFString.
-     */
-    private static MemorySegment createCFString(Arena arena, String s) throws Throwable {
-        byte[] utf8 = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        MemorySegment cstr = arena.allocate(utf8.length + 1L);
-        MemorySegment.copy(utf8, 0, cstr, ValueLayout.JAVA_BYTE, 0, utf8.length);
-        cstr.set(ValueLayout.JAVA_BYTE, utf8.length, (byte) 0); // null terminator
-        return (MemorySegment) CFStringCreateWithCString.invokeExact(
-                MemorySegment.NULL, cstr, kCFStringEncodingUTF8);
-    }
-
-    /**
-     * Creates a CFURL from a POSIX file path string.
-     * Caller must release the returned CFURL.
-     */
-    private static MemorySegment createFileURL(MemorySegment cfString) throws Throwable {
-        return (MemorySegment) CFURLCreateWithFileSystemPath.invokeExact(
-                MemorySegment.NULL, cfString, kCFURLPOSIXPathStyle, false);
     }
 
     // ── Shared helpers: operate on a CGImageSource ──────────────────────
@@ -316,17 +113,16 @@ final class AppleNative {
     private static int[] getSizeFromSource(MemorySegment imgSrc) throws java.io.IOException {
         MemorySegment props = MemorySegment.NULL;
         try {
-            props = (MemorySegment) CGImageSourceCopyPropertiesAtIndex.invokeExact(
-                    imgSrc, 0L, MemorySegment.NULL);
+            props = CGImageSource.copyPropertiesAtIndex(imgSrc, 0L, MemorySegment.NULL);
             if (MemorySegment.NULL.equals(props))
                 throw new javax.imageio.IIOException("Failed to read image properties");
 
-            int rawW = dictGetInt(props, kCGImagePropertyPixelWidth, -1);
-            int rawH = dictGetInt(props, kCGImagePropertyPixelHeight, -1);
+            int rawW = dictGetInt(props, CGImageSource.kPixelWidth(), -1);
+            int rawH = dictGetInt(props, CGImageSource.kPixelHeight(), -1);
             if (rawW <= 0 || rawH <= 0)
                 throw new javax.imageio.IIOException("Invalid image dimensions: " + rawW + "x" + rawH);
 
-            int orientation = dictGetInt(props, kCGImagePropertyOrientation, 1);
+            int orientation = dictGetInt(props, CGImageSource.kOrientation(), 1);
             if (orientation >= 5 && orientation <= 8) {
                 return new int[]{rawH, rawW};
             }
@@ -336,7 +132,7 @@ final class AppleNative {
         } catch (Throwable t) {
             throw new javax.imageio.IIOException("Native image size query failed", t);
         } finally {
-            release(props);
+            CoreFoundation.cfRelease(props);
         }
     }
 
@@ -351,13 +147,12 @@ final class AppleNative {
         MemorySegment thumbOpts = MemorySegment.NULL;
         MemorySegment cgImage = MemorySegment.NULL;
         try {
-            props = (MemorySegment) CGImageSourceCopyPropertiesAtIndex.invokeExact(
-                    imgSrc, 0L, MemorySegment.NULL);
+            props = CGImageSource.copyPropertiesAtIndex(imgSrc, 0L, MemorySegment.NULL);
             if (MemorySegment.NULL.equals(props))
                 throw new javax.imageio.IIOException("Failed to read image properties");
 
-            int rawW = dictGetInt(props, kCGImagePropertyPixelWidth, -1);
-            int rawH = dictGetInt(props, kCGImagePropertyPixelHeight, -1);
+            int rawW = dictGetInt(props, CGImageSource.kPixelWidth(), -1);
+            int rawH = dictGetInt(props, CGImageSource.kPixelHeight(), -1);
             if (rawW <= 0 || rawH <= 0)
                 throw new javax.imageio.IIOException("Invalid image dimensions: " + rawW + "x" + rawH);
 
@@ -383,8 +178,7 @@ final class AppleNative {
             if (MemorySegment.NULL.equals(thumbOpts))
                 throw new javax.imageio.IIOException("Failed to create thumbnail options");
 
-            cgImage = (MemorySegment) CGImageSourceCreateThumbnailAtIndex.invokeExact(
-                    imgSrc, 0L, thumbOpts);
+            cgImage = CGImageSource.createThumbnailAtIndex(imgSrc, 0L, thumbOpts);
             if (MemorySegment.NULL.equals(cgImage))
                 throw new javax.imageio.IIOException(
                         "CGImageSourceCreateThumbnailAtIndex returned NULL – decode failed");
@@ -397,9 +191,9 @@ final class AppleNative {
         } catch (Throwable t) {
             throw new javax.imageio.IIOException("Native image decode failed", t);
         } finally {
-            release(cgImage);
-            release(thumbOpts);
-            release(props);
+            CoreFoundation.cfRelease(cgImage);
+            CoreFoundation.cfRelease(thumbOpts);
+            CoreFoundation.cfRelease(props);
         }
     }
 
@@ -422,23 +216,63 @@ final class AppleNative {
             try {
                 MemorySegment buf = arena.allocate(len);
                 MemorySegment.copy(header, 0, buf, ValueLayout.JAVA_BYTE, 0, len);
-                cfData = (MemorySegment) CFDataCreateWithBytesNoCopy.invokeExact(
-                        MemorySegment.NULL, buf, (long) len, kCFAllocatorNull);
+                cfData = CoreFoundation.cfDataCreateNoCopy(
+                        MemorySegment.NULL, buf, len, CoreFoundation.kCFAllocatorNull());
                 if (MemorySegment.NULL.equals(cfData)) return false;
 
-                imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
-                        cfData, MemorySegment.NULL);
+                imgSrc = CGImageSource.createWithData(cfData, MemorySegment.NULL);
                 if (MemorySegment.NULL.equals(imgSrc)) return false;
 
-                int status = (int) CGImageSourceGetStatus.invokeExact(imgSrc);
                 // status >= kCGImageStatusIncomplete means the format was identified
-                return status >= kCGImageStatusIncomplete;
+                return CGImageSource.getStatus(imgSrc) >= CGImageSource.STATUS_INCOMPLETE;
             } catch (Throwable t) {
                 return false;
             } finally {
-                release(imgSrc);
-                release(cfData);
+                CoreFoundation.cfRelease(imgSrc);
+                CoreFoundation.cfRelease(cfData);
             }
+        }
+    }
+
+    // ── CGImageSource constructors ──────────────────────────────────────
+
+    /** An image source and the CF object backing it; both released by the caller. */
+    private record Source(MemorySegment imgSrc, MemorySegment backing) {}
+
+    private static Source sourceFromBytes(Arena arena, byte[] imageData, String unsupported)
+            throws java.io.IOException {
+        MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
+        MemorySegment cfData = CoreFoundation.cfDataCreateNoCopy(
+                MemorySegment.NULL, nativeBuf, imageData.length, CoreFoundation.kCFAllocatorNull());
+        if (MemorySegment.NULL.equals(cfData))
+            throw new javax.imageio.IIOException("CFDataCreateWithBytesNoCopy returned NULL");
+
+        MemorySegment imgSrc = CGImageSource.createWithData(cfData, MemorySegment.NULL);
+        if (MemorySegment.NULL.equals(imgSrc)) {
+            CoreFoundation.cfRelease(cfData);
+            throw new javax.imageio.IIOException(unsupported);
+        }
+        return new Source(imgSrc, cfData);
+    }
+
+    private static Source sourceFromPath(Arena arena, String path, String unsupported)
+            throws java.io.IOException {
+        MemorySegment cfUrl = CoreFoundation.cfUrlCreate(arena, path);
+        if (MemorySegment.NULL.equals(cfUrl))
+            throw new javax.imageio.IIOException("Failed to create CFURL for path");
+
+        MemorySegment imgSrc = CGImageSource.createWithURL(cfUrl, MemorySegment.NULL);
+        if (MemorySegment.NULL.equals(imgSrc)) {
+            CoreFoundation.cfRelease(cfUrl);
+            throw new javax.imageio.IIOException(unsupported + path);
+        }
+        return new Source(imgSrc, cfUrl);
+    }
+
+    private static void release(Source source) {
+        if (source != null) {
+            CoreFoundation.cfRelease(source.imgSrc());
+            CoreFoundation.cfRelease(source.backing());
         }
     }
 
@@ -453,31 +287,19 @@ final class AppleNative {
      */
     static int[] getSize(byte[] imageData) throws java.io.IOException {
         if (!IS_MACOS)
-            throw new javax.imageio.IIOException("Apple ImageIO is only available on macOS");
+            throw new javax.imageio.IIOException(unavailableMessage("Apple ImageIO is only available on macOS"));
 
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment cfData = MemorySegment.NULL;
-            MemorySegment imgSrc = MemorySegment.NULL;
+            Source source = null;
             try {
-                MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
-                cfData = (MemorySegment) CFDataCreateWithBytesNoCopy.invokeExact(
-                        MemorySegment.NULL, nativeBuf, (long) imageData.length, kCFAllocatorNull);
-                if (MemorySegment.NULL.equals(cfData))
-                    throw new javax.imageio.IIOException("CFDataCreateWithBytesNoCopy returned NULL");
-
-                imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
-                        cfData, MemorySegment.NULL);
-                if (MemorySegment.NULL.equals(imgSrc))
-                    throw new javax.imageio.IIOException("Unsupported image format");
-
-                return getSizeFromSource(imgSrc);
+                source = sourceFromBytes(arena, imageData, "Unsupported image format");
+                return getSizeFromSource(source.imgSrc());
             } catch (java.io.IOException e) {
                 throw e;
             } catch (Throwable t) {
                 throw new javax.imageio.IIOException("Native image size query failed", t);
             } finally {
-                release(imgSrc);
-                release(cfData);
+                release(source);
             }
         }
     }
@@ -492,34 +314,19 @@ final class AppleNative {
      */
     static int[] getSizeFromPath(String path) throws java.io.IOException {
         if (!IS_MACOS)
-            throw new javax.imageio.IIOException("Apple ImageIO is only available on macOS");
+            throw new javax.imageio.IIOException(unavailableMessage("Apple ImageIO is only available on macOS"));
 
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment cfString = MemorySegment.NULL;
-            MemorySegment cfUrl = MemorySegment.NULL;
-            MemorySegment imgSrc = MemorySegment.NULL;
+            Source source = null;
             try {
-                cfString = createCFString(arena, path);
-                if (MemorySegment.NULL.equals(cfString))
-                    throw new javax.imageio.IIOException("Failed to create CFString for path");
-                cfUrl = createFileURL(cfString);
-                if (MemorySegment.NULL.equals(cfUrl))
-                    throw new javax.imageio.IIOException("Failed to create CFURL for path");
-
-                imgSrc = (MemorySegment) CGImageSourceCreateWithURL.invokeExact(
-                        cfUrl, MemorySegment.NULL);
-                if (MemorySegment.NULL.equals(imgSrc))
-                    throw new javax.imageio.IIOException("Unsupported image format: " + path);
-
-                return getSizeFromSource(imgSrc);
+                source = sourceFromPath(arena, path, "Unsupported image format: ");
+                return getSizeFromSource(source.imgSrc());
             } catch (java.io.IOException e) {
                 throw e;
             } catch (Throwable t) {
                 throw new javax.imageio.IIOException("Native image size query failed for: " + path, t);
             } finally {
-                release(imgSrc);
-                release(cfUrl);
-                release(cfString);
+                release(source);
             }
         }
     }
@@ -544,32 +351,19 @@ final class AppleNative {
     static BufferedImage decode(byte[] imageData, Dimension renderSize)
             throws java.io.IOException {
         if (!IS_MACOS)
-            throw new javax.imageio.IIOException("Apple ImageIO decoding is only available on macOS");
+            throw new javax.imageio.IIOException(unavailableMessage("Apple ImageIO decoding is only available on macOS"));
 
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment cfData = MemorySegment.NULL;
-            MemorySegment imgSrc = MemorySegment.NULL;
+            Source source = null;
             try {
-                MemorySegment nativeBuf = arena.allocateFrom(ValueLayout.JAVA_BYTE, imageData);
-                cfData = (MemorySegment) CFDataCreateWithBytesNoCopy.invokeExact(
-                        MemorySegment.NULL, nativeBuf,
-                        (long) imageData.length, kCFAllocatorNull);
-                if (MemorySegment.NULL.equals(cfData))
-                    throw new javax.imageio.IIOException("CFDataCreateWithBytesNoCopy returned NULL");
-
-                imgSrc = (MemorySegment) CGImageSourceCreateWithData.invokeExact(
-                        cfData, MemorySegment.NULL);
-                if (MemorySegment.NULL.equals(imgSrc))
-                    throw new javax.imageio.IIOException("Unsupported format");
-
-                return decodeFromSource(arena, imgSrc, renderSize);
+                source = sourceFromBytes(arena, imageData, "Unsupported format");
+                return decodeFromSource(arena, source.imgSrc(), renderSize);
             } catch (java.io.IOException e) {
                 throw e;
             } catch (Throwable t) {
                 throw new javax.imageio.IIOException("Native image decode failed", t);
             } finally {
-                release(imgSrc);
-                release(cfData);
+                release(source);
             }
         }
     }
@@ -593,34 +387,19 @@ final class AppleNative {
     static BufferedImage decodeFromPath(String path, Dimension renderSize)
             throws java.io.IOException {
         if (!IS_MACOS)
-            throw new javax.imageio.IIOException("Apple ImageIO decoding is only available on macOS");
+            throw new javax.imageio.IIOException(unavailableMessage("Apple ImageIO decoding is only available on macOS"));
 
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment cfString = MemorySegment.NULL;
-            MemorySegment cfUrl = MemorySegment.NULL;
-            MemorySegment imgSrc = MemorySegment.NULL;
+            Source source = null;
             try {
-                cfString = createCFString(arena, path);
-                if (MemorySegment.NULL.equals(cfString))
-                    throw new javax.imageio.IIOException("Failed to create CFString for path");
-                cfUrl = createFileURL(cfString);
-                if (MemorySegment.NULL.equals(cfUrl))
-                    throw new javax.imageio.IIOException("Failed to create CFURL for path");
-
-                imgSrc = (MemorySegment) CGImageSourceCreateWithURL.invokeExact(
-                        cfUrl, MemorySegment.NULL);
-                if (MemorySegment.NULL.equals(imgSrc))
-                    throw new javax.imageio.IIOException("Unsupported format: " + path);
-
-                return decodeFromSource(arena, imgSrc, renderSize);
+                source = sourceFromPath(arena, path, "Unsupported format: ");
+                return decodeFromSource(arena, source.imgSrc(), renderSize);
             } catch (java.io.IOException e) {
                 throw e;
             } catch (Throwable t) {
                 throw new javax.imageio.IIOException("Native image decode failed for: " + path, t);
             } finally {
-                release(imgSrc);
-                release(cfUrl);
-                release(cfString);
+                release(source);
             }
         }
     }
