@@ -68,17 +68,6 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
     private static final MethodHandle msgSend_ptr_ptr;
     /** (id, SEL) → BOOL */
     private static final MethodHandle msgSend_ret_bool;
-    /** (id, SEL) → CGAffineTransform */
-    private static final MethodHandle msgSend_ret_transform;
-
-    /** CGAffineTransform: six CGFloat members {@code a, b, c, d, tx, ty}. */
-    private static final StructLayout CGAFFINETRANSFORM = MemoryLayout.structLayout(
-            ValueLayout.JAVA_DOUBLE.withName("a"),
-            ValueLayout.JAVA_DOUBLE.withName("b"),
-            ValueLayout.JAVA_DOUBLE.withName("c"),
-            ValueLayout.JAVA_DOUBLE.withName("d"),
-            ValueLayout.JAVA_DOUBLE.withName("tx"),
-            ValueLayout.JAVA_DOUBLE.withName("ty"));
 
     static {
         if (AVAILABLE) {
@@ -91,14 +80,11 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
                     ValueLayout.ADDRESS, ValueLayout.ADDRESS));
             msgSend_ret_bool = CoreFoundation.msgSend(FunctionDescriptor.of(ValueLayout.JAVA_BYTE,
                     ValueLayout.ADDRESS, ValueLayout.ADDRESS));
-            msgSend_ret_transform = CoreFoundation.msgSend(FunctionDescriptor.of(CGAFFINETRANSFORM,
-                    ValueLayout.ADDRESS, ValueLayout.ADDRESS));
         } else {
             msgSend = null;
             msgSend_ptr = null;
             msgSend_ptr_ptr = null;
             msgSend_ret_bool = null;
-            msgSend_ret_transform = null;
         }
     }
 
@@ -166,33 +152,6 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
         }
     }
 
-    /**
-     * Returns whether the track's preferred transform turns the picture by an
-     * odd number of quarter turns, so that the displayed frame has the stored
-     * width and height swapped. The frame generator applies that transform,
-     * while the track's natural size does not include it.
-     */
-    private static boolean displayTransposed(Path videoFile) {
-        MemorySegment pool = CoreFoundation.autoreleasePoolPush();
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment track = playableVideoTrack(arena, videoFile);
-            if (MemorySegment.NULL.equals(track)) return false;
-            MemorySegment transform =
-                    (MemorySegment) msgSend_ret_transform.invokeExact(
-                            (SegmentAllocator) arena, track,
-                            CoreFoundation.selRegisterName(arena, "preferredTransform"));
-            double a = transform.get(ValueLayout.JAVA_DOUBLE, 0);
-            double b = transform.get(ValueLayout.JAVA_DOUBLE, 8);
-            if (a == 0 && b == 0) return false;
-            long quarterTurns = Math.round(Math.toDegrees(Math.atan2(b, a)) / 90.0);
-            return (quarterTurns & 1) != 0;
-        } catch (Throwable ignored) {
-            return false;
-        } finally {
-            CoreFoundation.autoreleasePoolPop(pool);
-        }
-    }
-
     @Override
     public BufferedImage extractFrame(Path videoFile, Duration time) throws IOException {
         return extractFrame(videoFile, time, null);
@@ -235,11 +194,10 @@ public class AppleVideoFrameExtractor implements VideoFrameExtractorProvider {
         MemorySegment pool = CoreFoundation.autoreleasePoolPush();
         try (Arena arena = Arena.ofConfined()) {
             var info = AVFoundation.getVideoInfo(arena, videoFile.toAbsolutePath().toString());
-            // Report the displayed size, which is what extractFrame returns.
-            boolean transposed = displayTransposed(videoFile);
+            // The binding reports the displayed size, which is what
+            // extractFrame returns.
             return new VideoInfo(
-                    transposed ? info.height() : info.width(),
-                    transposed ? info.width() : info.height(),
+                    info.width(), info.height(),
                     Duration.ofMillis(info.durationMillis()), null, info.frameRate());
         } catch (RuntimeException e) {
             throw new IOException("Video info extraction failed", e);
