@@ -119,12 +119,86 @@ class AppleImageReaderTest {
             Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
             assertTrue(readers.hasNext());
             ImageReader reader = readers.next();
-            assertInstanceOf(AppleImageReader.class, reader);
+            RoutingImageReader routed =
+                    assertInstanceOf(RoutingImageReader.class, reader);
             reader.setInput(iis);
+            assertEquals("apple", routed.backendId());
             BufferedImage img = reader.read(0);
             assertNotNull(img, "PNG should still be readable");
             assertEquals(8, img.getWidth());
             reader.dispose();
+        }
+    }
+
+    // ── Routing follows the input that is set, not an earlier probe ─────
+
+    @Test
+    void readerCreatedByNameIgnoresAnEarlierProbe() throws IOException {
+        // Probe a PNG and deliberately never create a reader for it.
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png");
+             ImageInputStream iis = ImageIO.createImageInputStream(is)) {
+            assertTrue(ImageIO.getImageReaders(iis).hasNext());
+        }
+
+        ImageReader reader = ImageIO.getImageReadersByFormatName("heic").next();
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.heic");
+             ImageInputStream iis = ImageIO.createImageInputStream(is)) {
+            RoutingImageReader routed =
+                    assertInstanceOf(RoutingImageReader.class, reader);
+            reader.setInput(iis);
+            assertEquals("apple", routed.backendId());
+            assertEquals(8, reader.read(0).getWidth());
+        } finally {
+            reader.dispose();
+        }
+    }
+
+    @Test
+    void routedReaderReroutesWhenInputChanges() throws IOException {
+        ImageReader reader = ImageIO.getImageReadersByFormatName("png").next();
+        try {
+            for (String resource : new String[]{"test8x8.png", "test8x8.webp"}) {
+                try (InputStream is = getClass().getClassLoader().getResourceAsStream(resource);
+                     ImageInputStream iis = ImageIO.createImageInputStream(is)) {
+                    reader.setInput(iis);
+                    assertEquals(8, reader.getWidth(0), resource);
+                    assertEquals(8, reader.read(0).getHeight(), resource);
+                }
+            }
+        } finally {
+            reader.dispose();
+        }
+    }
+
+    @Test
+    void progressListenersReachTheBackendReader() throws IOException {
+        java.util.concurrent.atomic.AtomicInteger completed =
+                new java.util.concurrent.atomic.AtomicInteger();
+        javax.imageio.event.IIOReadProgressListener listener =
+                new javax.imageio.event.IIOReadProgressListener() {
+                    @Override public void sequenceStarted(ImageReader source, int minIndex) {}
+                    @Override public void sequenceComplete(ImageReader source) {}
+                    @Override public void imageStarted(ImageReader source, int imageIndex) {}
+                    @Override public void imageProgress(ImageReader source, float percentageDone) {}
+                    @Override public void imageComplete(ImageReader source) {
+                        completed.incrementAndGet();
+                    }
+                    @Override public void thumbnailStarted(ImageReader source, int imageIndex, int thumbnailIndex) {}
+                    @Override public void thumbnailProgress(ImageReader source, float percentageDone) {}
+                    @Override public void thumbnailComplete(ImageReader source) {}
+                    @Override public void readAborted(ImageReader source) {}
+                };
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("test8x8.png");
+             ImageInputStream iis = ImageIO.createImageInputStream(is)) {
+            ImageReader reader = ImageIO.getImageReaders(iis).next();
+            try {
+                reader.addIIOReadProgressListener(listener);
+                reader.setInput(iis);
+                reader.read(0);
+                assertEquals(1, completed.get());
+            } finally {
+                reader.dispose();
+            }
         }
     }
 

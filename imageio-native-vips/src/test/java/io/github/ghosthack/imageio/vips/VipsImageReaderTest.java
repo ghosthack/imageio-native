@@ -177,6 +177,96 @@ class VipsImageReaderTest {
         }
     }
 
+    // ── EXIF orientation ────────────────────────────────────────────────
+    // test-orient6.jpg is stored 4x8 with EXIF orientation 6 (rotate 90° CW).
+    // Display-oriented it is 8x4: Blue(TL) Red(TR) / White(BL) Green(BR).
+
+    @Test
+    void sizeQueriesReportDisplayOrientation() throws IOException {
+        assumeVips();
+        byte[] data = loadResource("test-orient6.jpg");
+        assertArrayEquals(new int[]{8, 4}, VipsNative.getSize(data));
+
+        Path file = Files.createTempFile("imageio-native-orient-", ".jpg");
+        try {
+            Files.write(file, data);
+            assertArrayEquals(new int[]{8, 4},
+                    VipsNative.getSizeFromPath(file.toString()));
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void fullDecodeAppliesExifOrientation() throws IOException {
+        assumeVips();
+        byte[] data = loadResource("test-orient6.jpg");
+        assertDisplayOriented(VipsNative.decode(data), 8, 4);
+
+        Path file = Files.createTempFile("imageio-native-orient-", ".jpg");
+        try {
+            Files.write(file, data);
+            assertDisplayOriented(
+                    VipsNative.decodeFromPath(file.toString()), 8, 4);
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void renderSizedDecodeMatchesFullDecodeOrientation() throws IOException {
+        assumeVips();
+        Path file = Files.createTempFile("imageio-native-orient-", ".jpg");
+        try {
+            Files.write(file, loadResource("test-orient6.jpg"));
+            assertDisplayOriented(VipsNative.decodeFromPath(file.toString(), 16, 8), 16, 8);
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void sourceRegionIsSelectedInDisplayOrientation() throws IOException {
+        assumeVips();
+        Path file = Files.createTempFile("imageio-native-orient-", ".jpg");
+        try {
+            Files.write(file, loadResource("test-orient6.jpg"));
+            ImageReadParam param =
+                    ImageReadParamSupport.createDefaultReadParam();
+            // Right half of the 8x4 display image: Red over Green.
+            param.setSourceRegion(new Rectangle(4, 0, 4, 4));
+            NativeDecodeRequest request =
+                    NativeDecodeRequest.from(param, 8, 4);
+
+            BufferedImage region = VipsNative.decodeFromPath(file.toString(), request);
+
+            assertEquals(4, region.getWidth());
+            assertEquals(4, region.getHeight());
+            TestPixels.assertColourClose(
+                    "region top (red)", 0xFFFF0000, region.getRGB(2, 0), 70);
+            TestPixels.assertColourClose(
+                    "region bottom (green)", 0xFF00FF00, region.getRGB(2, 3), 70);
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    private static void assertDisplayOriented(
+            BufferedImage image, int width, int height) {
+        assertEquals(width, image.getWidth(), "display width");
+        assertEquals(height, image.getHeight(), "display height");
+        int right = width - 1;
+        int bottom = height - 1;
+        TestPixels.assertColourClose(
+                "top-left (blue)", 0xFF0000FF, image.getRGB(0, 0), 70);
+        TestPixels.assertColourClose(
+                "top-right (red)", 0xFFFF0000, image.getRGB(right, 0), 70);
+        TestPixels.assertColourClose(
+                "bottom-left (white)", 0xFFFFFFFF, image.getRGB(0, bottom), 70);
+        TestPixels.assertColourClose(
+                "bottom-right (green)", 0xFF00FF00, image.getRGB(right, bottom), 70);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private byte[] loadResource(String name) throws IOException {

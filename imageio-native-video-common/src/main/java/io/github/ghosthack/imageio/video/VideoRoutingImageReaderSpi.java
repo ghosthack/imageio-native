@@ -13,8 +13,6 @@ import java.util.Locale;
 /** The single ImageIO provider for all video poster-frame backends. */
 public final class VideoRoutingImageReaderSpi extends ImageReaderSpi {
 
-    private static final ThreadLocal<VideoRouting.Decision> PENDING = new ThreadLocal<>();
-
     public VideoRoutingImageReaderSpi() {
         super("imageio-native", "2.0",
                 VideoFormatRegistry.FORMAT_NAMES,
@@ -30,27 +28,20 @@ public final class VideoRoutingImageReaderSpi extends ImageReaderSpi {
     @Override
     public boolean canDecodeInput(Object source) throws IOException {
         if (!(source instanceof io.github.ghosthack.imageio.common.PathAwareImageInputStream stream)) {
-            PENDING.remove();
             return false;
         }
         String format = VideoFormatDetector.detectFormat(stream);
-        VideoRouting.Decision decision = format == null
-                ? null : VideoRouting.select(stream.getPath(), format);
-        if (decision == null) {
-            PENDING.remove();
-            return false;
-        }
-        PENDING.set(decision);
-        return true;
+        return format != null
+                && VideoRouting.select(stream.getPath(), format) != null;
     }
 
+    /**
+     * Always returns a reader that routes from the input the caller sets,
+     * never from an earlier probe of a different input.
+     */
     @Override
     public ImageReader createReaderInstance(Object extension) {
-        VideoRouting.Decision decision = PENDING.get();
-        PENDING.remove();
-        return decision == null
-                ? new NativeVideoReader(this)
-                : new NativeVideoReader(this, decision.backend());
+        return new NativeVideoReader(this);
     }
 
     @Override

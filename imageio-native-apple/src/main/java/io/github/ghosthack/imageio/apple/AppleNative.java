@@ -1,6 +1,7 @@
 package io.github.ghosthack.imageio.apple;
 
 import io.github.ghosthack.imageio.common.ImageReadParamSupport;
+import io.github.ghosthack.imageio.common.NativeLimits;
 import io.github.ghosthack.panama.media.cgimage.CGImageSource;
 import io.github.ghosthack.panama.media.corefoundation.CoreFoundation;
 
@@ -51,12 +52,6 @@ final class AppleNative {
                 : offMacMessage;
     }
 
-    /**
-     * Maximum number of pixels (width * height) we are willing to decode.
-     * Prevents OOM on malicious/corrupt images declaring huge dimensions.
-     * Default: 256 megapixels (e.g. 16384 x 16384).
-     */
-    static final long MAX_PIXELS = Long.getLong("imageio.native.maxPixels", 256L * 1024 * 1024);
 
     // ── Helper: read an int property from a CFDictionary ────────────────
 
@@ -156,13 +151,11 @@ final class AppleNative {
             if (rawW <= 0 || rawH <= 0)
                 throw new javax.imageio.IIOException("Invalid image dimensions: " + rawW + "x" + rawH);
 
-            long decodedPixels = renderSize != null
-                    ? (long) renderSize.width * renderSize.height
-                    : (long) rawW * rawH;
-            if (decodedPixels > MAX_PIXELS)
-                throw new javax.imageio.IIOException(
-                        "Decoded image too large: " + decodedPixels
-                                + " pixels exceeds limit of " + MAX_PIXELS);
+            if (renderSize != null) {
+                NativeLimits.requireDecodable(renderSize.width, renderSize.height);
+            } else {
+                NativeLimits.requireDecodable(rawW, rawH);
+            }
 
             int maxDim = renderSize != null
                     ? Math.max(renderSize.width, renderSize.height)

@@ -18,8 +18,6 @@ import java.util.Set;
  */
 public final class RoutingImageReaderSpi extends ImageReaderSpi {
 
-    private static final ThreadLocal<ImageRouting.Decision> PENDING = new ThreadLocal<>();
-
     public RoutingImageReaderSpi() {
         this(Metadata.discover());
     }
@@ -36,22 +34,17 @@ public final class RoutingImageReaderSpi extends ImageReaderSpi {
 
     @Override
     public boolean canDecodeInput(Object source) throws IOException {
-        ImageRouting.Decision decision = ImageRouting.select(source);
-        if (decision == null) {
-            PENDING.remove();
-            return false;
-        }
-        PENDING.set(decision);
-        return true;
+        return ImageRouting.select(source) != null;
     }
 
+    /**
+     * Always returns a deferred reader. Ownership is resolved from the input
+     * the caller actually sets, never from an earlier probe, so a reader
+     * obtained by format name, suffix, or MIME type cannot inherit the
+     * decision made for a different input.
+     */
     @Override
     public ImageReader createReaderInstance(Object extension) {
-        ImageRouting.Decision decision = PENDING.get();
-        PENDING.remove();
-        if (decision != null) {
-            return decision.backend().createReader(this);
-        }
         return new RoutingImageReader(this);
     }
 

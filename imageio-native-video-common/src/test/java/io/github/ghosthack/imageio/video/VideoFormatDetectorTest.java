@@ -51,6 +51,17 @@ class VideoFormatDetectorTest {
     }
 
     @Test
+    void rejectsCanonCr3AndJpegXlFtyp() throws IOException {
+        assertFalse(probe(makeFtyp("crx ", 20)), "Canon CR3 should NOT be detected as video");
+        assertFalse(probe(makeFtyp("jxl ", 20)), "JPEG XL should NOT be detected as video");
+    }
+
+    @Test
+    void rejectsAudioOnlyFtyp() throws IOException {
+        assertFalse(probe(makeFtyp("M4A ", 20)), "M4A audio should NOT be detected as video");
+    }
+
+    @Test
     void rejectsMif1Ftyp() throws IOException {
         byte[] h = makeFtyp("mif1", 20);
         assertFalse(probe(h), "HEIF (mif1) should NOT be detected as video");

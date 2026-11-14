@@ -56,6 +56,35 @@ class AppleVideoFrameExtractorTest {
         return target;
     }
 
+    // ── Display rotation ────────────────────────────────────────────────
+    // test-video-rotated.mp4 is stored 32x16 (Red | Blue) with a display
+    // matrix that turns it 90° clockwise: displayed 16x32, Red over Blue.
+
+    @Test
+    void rotatedVideoReportsTheDisplayedSize() throws IOException {
+        AppleVideoFrameExtractor extractor = new AppleVideoFrameExtractor();
+        Path video = extractResource("test-video-rotated.mp4");
+
+        var info = extractor.getInfo(video);
+        BufferedImage frame = extractor.extractFrame(video, Duration.ZERO);
+
+        assertEquals(16, info.width());
+        assertEquals(32, info.height());
+        assertEquals(info.width(), frame.getWidth());
+        assertEquals(info.height(), frame.getHeight());
+        TestPixels.assertColourClose("top (red)", RED, frame.getRGB(8, 4), TOLERANCE);
+        TestPixels.assertColourClose("bottom (blue)", BLUE, frame.getRGB(8, 27), TOLERANCE);
+    }
+
+    @Test
+    void uprightVideoSizeIsUnchanged() throws IOException {
+        AppleVideoFrameExtractor extractor = new AppleVideoFrameExtractor();
+        var info = extractor.getInfo(extractResource("test-video-3s.mp4"));
+
+        assertEquals(16, info.width());
+        assertEquals(16, info.height());
+    }
+
     private Path testVideo() throws IOException {
         return extractResource("test-video-3s.mp4");
     }

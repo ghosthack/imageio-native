@@ -294,7 +294,7 @@ ImageIO
     v
 routing SPI
     |
-    +-- detect the format once
+    +-- detect the format
     +-- discover installed backend services
     +-- run lightweight capability probes
     +-- resolve ownership
@@ -304,6 +304,13 @@ routing SPI
 The routing SPI is ordered before host readers, but returns `false` whenever no
 added backend owns the input. Consequently it affects a host format only when
 an installed backend has positively claimed that particular input.
+
+Readers handed out by the routing SPI are always `RoutingImageReader`
+instances. Each one resolves its owner from the input passed to `setInput`,
+so a reader obtained by format name, suffix, or MIME type, or reused for a
+second input, is routed exactly like one obtained from
+`ImageIO.getImageReaders(input)`. `RoutingImageReader.backendId()` reports
+which backend owns the current input.
 
 Backend-to-backend `IIORegistry.setOrdering()`, shared format advertisements on
 every backend SPI, global priority properties, and decode-time retry chains are
@@ -425,6 +432,13 @@ BufferedImage frame = VideoFrameExtractor.extractFrame(
 VideoInfo info = VideoFrameExtractor.getInfo(Path.of("clip.mp4"));
 ```
 
+The AVFoundation and FFmpeg backends return frames as displayed: the
+container's rotation (the metadata phones record for portrait video) is
+applied, and `VideoInfo` reports the displayed width and height, so it always
+matches the extracted frame. With FFmpeg, a frame requested at a time is the
+first frame at or after it, decoded forward from the preceding keyframe;
+AVFoundation picks a frame within its seek tolerance of the requested time.
+
 | Module | Platform | Native API | Containers |
 |--------|----------|------------|------------|
 | `imageio-native-video-apple` | macOS | AVFoundation (AVAssetImageGenerator) | MP4, MOV, M4V, 3GP |
@@ -469,7 +483,7 @@ ImageIO.read(file)
     ▼
 RoutingImageReaderSpi       one SPI for all still-image backends
     │
-    ├── detect format once
+    ├── detect format
     ├── discover installed backend services
     ├── probe actual input capability
     └── resolve exactly one owner
@@ -521,9 +535,14 @@ processing and the worst-case thumbnail surfaces used for exact Apple/WIC
 render sizes. Override the limit in bytes with
 `-Dimageio.native.maxIntermediateBytes=<bytes>`.
 
+Independently of read parameters, the Apple and libvips backends refuse to
+decode an image larger than 256 megapixels, which guards against corrupt or
+hostile files that declare huge dimensions. Override the limit with
+`-Dimageio.native.maxPixels=<pixels>`.
+
 ### EXIF orientation
 
-Images from phones and cameras often carry an EXIF orientation tag (values 1-8) that describes how the sensor image should be rotated or flipped for correct display. Both backends apply this transform automatically during decode so the returned `BufferedImage` is always display-ready.
+Images from phones and cameras often carry an EXIF orientation tag (values 1-8) that describes how the sensor image should be rotated or flipped for correct display. Every still-image backend applies this transform automatically during decode, so the returned `BufferedImage` is display-ready and the same input has the same orientation whichever backend owns it.
 
 | EXIF value | Transform |
 |------------|-----------|
@@ -540,9 +559,13 @@ Images from phones and cameras often carry an EXIF orientation tag (values 1-8) 
 
 **Windows (WIC):** Reads the EXIF orientation tag via `IWICMetadataQueryReader`, then inserts an `IWICBitmapFlipRotator` between the frame decoder and the format converter. The flip-rotator is a zero-copy coordinate remap -- it transforms pixel coordinates during `CopyPixels` rather than allocating a second buffer. For orientation 1 (no rotation), the flip-rotator is skipped entirely.
 
-Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped for orientations 5-8 (90/270 rotations), so width and height always reflect the display-oriented image.
+**libvips:** Applies `vips_autorot` to full and cropped decodes; `vips_thumbnail` already rotates reduced decodes. Upright images stream with sequential access, while an image that needs a transform is opened with random access because rotation cannot be streamed.
 
-**Performance impact:** Negligible. Both platforms apply the transform as part of the existing decode pipeline with no extra buffer allocations or pixel copies. The macOS path creates a small options dictionary per decode call; the Windows flip-rotator is a zero-copy coordinate remap. Orientation 1 (the common case for non-phone images) skips the transform entirely.
+**ImageMagick:** Calls `MagickAutoOrientImage` after reading and before any resize or crop.
+
+Size queries and decodes are orientation-aware on every backend: dimensions are swapped for orientations 5-8 (90/270 rotations), so width and height always reflect the display-oriented image.
+
+**Performance impact:** Negligible on the platform backends. Both platforms apply the transform as part of the existing decode pipeline with no extra buffer allocations or pixel copies. The macOS path creates a small options dictionary per decode call; the Windows flip-rotator is a zero-copy coordinate remap. Orientation 1 (the common case for non-phone images) skips the transform entirely. libvips and ImageMagick rotate in memory, so a rotated image costs one extra pass there.
 
 ## Project structure
 

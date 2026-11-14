@@ -60,6 +60,8 @@ final class MagickNative {
     private static final MethodHandle MagickPingImageBlob;
     private static final MethodHandle MagickGetImageWidth;
     private static final MethodHandle MagickGetImageHeight;
+    private static final MethodHandle MagickGetImageOrientation;
+    private static final MethodHandle MagickAutoOrientImage;
     private static final MethodHandle MagickSetImageAlphaChannel;
     private static final MethodHandle MagickResizeImage;
     private static final MethodHandle MagickExportImagePixels;
@@ -100,6 +102,10 @@ final class MagickNative {
                     FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
             MagickGetImageHeight = downcall("MagickGetImageHeight",
                     FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS));
+            MagickGetImageOrientation = downcall("MagickGetImageOrientation",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+            MagickAutoOrientImage = downcall("MagickAutoOrientImage",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
             MagickSetImageAlphaChannel = downcall("MagickSetImageAlphaChannel",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT,
                             ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
@@ -138,6 +144,8 @@ final class MagickNative {
             MagickPingImageBlob = null;
             MagickGetImageWidth = null;
             MagickGetImageHeight = null;
+            MagickGetImageOrientation = null;
+            MagickAutoOrientImage = null;
             MagickSetImageAlphaChannel = null;
             MagickResizeImage = null;
             MagickExportImagePixels = null;
@@ -193,7 +201,7 @@ final class MagickNative {
                 int h = (int) (long) MagickGetImageHeight.invokeExact(wand);
                 if (w <= 0 || h <= 0)
                     throw new IIOException("Invalid image dimensions: " + w + "x" + h);
-                return new int[]{w, h};
+                return orientedSize(wand, w, h);
             } finally {
                 destroyWand(wand);
             }
@@ -222,7 +230,7 @@ final class MagickNative {
                 int h = (int) (long) MagickGetImageHeight.invokeExact(wand);
                 if (w <= 0 || h <= 0)
                     throw new IIOException("Invalid image dimensions: " + w + "x" + h);
-                return new int[]{w, h};
+                return orientedSize(wand, w, h);
             } finally {
                 destroyWand(wand);
             }
@@ -267,6 +275,7 @@ final class MagickNative {
                 if (rc != MagickTrue)
                     throw new IIOException("ImageMagick read failed: " + errorMessage(arena, wand));
 
+                autoOrient(arena, wand);
                 resize(wand, renderSize);
                 return exportPixels(arena, wand, request);
             } finally {
@@ -313,6 +322,7 @@ final class MagickNative {
                     throw new IIOException("ImageMagick read failed for: " + path
                             + " — " + errorMessage(arena, wand));
 
+                autoOrient(arena, wand);
                 resize(wand, renderSize);
                 return exportPixels(arena, wand, request);
             } finally {
@@ -326,6 +336,32 @@ final class MagickNative {
     }
 
     // ── Internal ────────────────────────────────────────────────────────
+
+    /**
+     * Returns display-oriented dimensions: EXIF orientations 5-8 (the
+     * MagickCore {@code LeftTop} .. {@code LeftBottom} values) transpose the
+     * stored image, so width and height are swapped.
+     */
+    private static int[] orientedSize(MemorySegment wand, int w, int h)
+            throws Throwable {
+        int orientation = (int) MagickGetImageOrientation.invokeExact(wand);
+        return orientation >= 5 && orientation <= 8
+                ? new int[]{h, w}
+                : new int[]{w, h};
+    }
+
+    /**
+     * Applies the EXIF orientation so the decoded pixels are display-ready,
+     * matching the platform-native backends.
+     */
+    private static void autoOrient(Arena arena, MemorySegment wand)
+            throws Throwable {
+        int rc = (int) MagickAutoOrientImage.invokeExact(wand);
+        if (rc != MagickTrue) {
+            throw new IIOException("ImageMagick auto-orient failed: "
+                    + errorMessage(arena, wand));
+        }
+    }
 
     private static void resize(MemorySegment wand, Dimension renderSize)
             throws Throwable {
