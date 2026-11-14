@@ -294,7 +294,7 @@ ImageIO
     v
 routing SPI
     |
-    +-- detect the format once
+    +-- detect the format
     +-- discover installed backend services
     +-- run lightweight capability probes
     +-- resolve ownership
@@ -304,6 +304,13 @@ routing SPI
 The routing SPI is ordered before host readers, but returns `false` whenever no
 added backend owns the input. Consequently it affects a host format only when
 an installed backend has positively claimed that particular input.
+
+Readers handed out by the routing SPI are always `RoutingImageReader`
+instances. Each one resolves its owner from the input passed to `setInput`,
+so a reader obtained by format name, suffix, or MIME type, or reused for a
+second input, is routed exactly like one obtained from
+`ImageIO.getImageReaders(input)`. `RoutingImageReader.backendId()` reports
+which backend owns the current input.
 
 Backend-to-backend `IIORegistry.setOrdering()`, shared format advertisements on
 every backend SPI, global priority properties, and decode-time retry chains are
@@ -469,7 +476,7 @@ ImageIO.read(file)
     ▼
 RoutingImageReaderSpi       one SPI for all still-image backends
     │
-    ├── detect format once
+    ├── detect format
     ├── discover installed backend services
     ├── probe actual input capability
     └── resolve exactly one owner

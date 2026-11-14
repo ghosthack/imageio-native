@@ -21,6 +21,48 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class NativeVideoReaderTest {
 
     @Test
+    void routingProviderCreatesReaderThatRoutesPerInput() throws IOException {
+        Path file = Files.createTempFile("imageio-native-video-reader-", ".mp4");
+        try (PathAwareImageInputStream input =
+                     new PathAwareImageInputStream(file.toFile())) {
+            NativeVideoReader reader = (NativeVideoReader)
+                    new VideoRoutingImageReaderSpi().createReaderInstance(null);
+            try {
+                reader.setInput(input);
+                // An empty file is not a video, so routing must decline it
+                // rather than reuse a backend chosen for some earlier input.
+                assertThrows(IOException.class, () -> reader.getWidth(0));
+            } finally {
+                reader.dispose();
+            }
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
+    void boundReaderKeepsItsBackendAcrossInputs() throws IOException {
+        Path file = Files.createTempFile("imageio-native-video-reader-", ".mp4");
+        try {
+            NativeVideoReader reader =
+                    new NativeVideoReader(null, new TestProvider());
+            try {
+                for (int i = 0; i < 2; i++) {
+                    try (PathAwareImageInputStream input =
+                                 new PathAwareImageInputStream(file.toFile())) {
+                        reader.setInput(input);
+                        assertEquals(reader.getWidth(0), reader.read(0).getWidth());
+                    }
+                }
+            } finally {
+                reader.dispose();
+            }
+        } finally {
+            Files.deleteIfExists(file);
+        }
+    }
+
+    @Test
     void readAppliesImageReadParamToExtractedFrame() throws IOException {
         Path file = Files.createTempFile("imageio-native-video-reader-", ".mp4");
         try (PathAwareImageInputStream input =

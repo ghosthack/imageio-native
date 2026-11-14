@@ -136,8 +136,10 @@ class WicImageReaderTest {
             Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
             assertTrue(readers.hasNext());
             ImageReader reader = readers.next();
-            assertInstanceOf(WicImageReader.class, reader);
+            RoutingImageReader routed =
+                    assertInstanceOf(RoutingImageReader.class, reader);
             reader.setInput(iis);
+            assertEquals("windows", routed.backendId());
             BufferedImage img = reader.read(0);
             assertNotNull(img, "PNG should still be readable");
             assertEquals(8, img.getWidth());

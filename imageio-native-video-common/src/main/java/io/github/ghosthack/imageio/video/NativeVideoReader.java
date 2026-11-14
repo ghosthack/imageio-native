@@ -21,8 +21,9 @@ import java.util.List;
  * {@link ImageReader} that extracts the poster frame from a video file.
  * <p>
  * This is a concrete class (not abstract) that delegates to a
- * {@link VideoFrameExtractorProvider} for actual frame extraction.  Each
- * video backend's SPI creates an instance of this class with its provider.
+ * {@link VideoFrameExtractorProvider} for actual frame extraction. The
+ * routing SPI creates instances that select the owning backend from each
+ * input; callers may also bind a reader to one backend.
  * <p>
  * Supports a single image (the poster frame at t=0).  For time-based
  * extraction or multi-frame access, use {@link VideoFrameExtractor} directly.
@@ -36,17 +37,22 @@ public class NativeVideoReader extends ImageReader {
     private static final long MAX_INTERMEDIATE_BYTES = Long.getLong(
             "imageio.native.maxIntermediateBytes", 512L * 1024 * 1024);
 
+    /** Backend fixed by the caller, or {@code null} to route per input. */
+    private final VideoFrameExtractorProvider fixedProvider;
     private VideoFrameExtractorProvider provider;
     private volatile VideoInfo cachedInfo;
 
+    /** Creates a reader bound to one backend for every input. */
     public NativeVideoReader(ImageReaderSpi originatingProvider,
                              VideoFrameExtractorProvider extractorProvider) {
         super(originatingProvider);
+        this.fixedProvider = extractorProvider;
         this.provider = extractorProvider;
     }
 
+    /** Creates a reader that selects the owning backend for each input. */
     public NativeVideoReader(ImageReaderSpi originatingProvider) {
-        super(originatingProvider);
+        this(originatingProvider, null);
     }
 
     @Override
@@ -118,6 +124,7 @@ public class NativeVideoReader extends ImageReader {
     public void setInput(Object input, boolean seekForwardOnly, boolean ignoreMetadata) {
         super.setInput(input, seekForwardOnly, ignoreMetadata);
         cachedInfo = null;
+        provider = fixedProvider;
     }
 
     @Override
