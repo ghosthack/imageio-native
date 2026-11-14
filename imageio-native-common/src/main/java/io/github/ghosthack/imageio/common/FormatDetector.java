@@ -147,45 +147,132 @@ public final class FormatDetector {
         return null;
     }
 
+    // ── ISO BMFF brands ─────────────────────────────────────────────────
+
+    private static final Set<String> HEIC_BRANDS = Set.of(
+            "heic", "heix", "heim", "heis", "hevc", "hevx", "hevm", "hevs");
+    private static final Set<String> HEIF_BRANDS = Set.of("mif1", "mif2");
+    private static final Set<String> AVIF_BRANDS = Set.of("avif", "avis");
+    private static final Set<String> JPEG2000_BRANDS = Set.of("jp2 ", "jpx ", "jpm ");
+    private static final Set<String> JXL_BRANDS = Set.of("jxl ");
+    private static final Set<String> CR3_BRANDS = Set.of("crx ", "cr3 ");
+
+    /**
+     * Returns whether an ISO BMFF {@code ftyp} brand identifies a still-image
+     * container (HEIF family, AVIF, JPEG 2000, JPEG XL, Canon CR3).
+     * <p>
+     * Video detection uses this to leave image containers to the still-image
+     * router, so both routers share one list.
+     *
+     * @param brand four-character brand code, including trailing spaces
+     */
+    public static boolean isStillImageBrand(String brand) {
+        return specificIsoBmffFormat(brand) != null
+                || HEIF_BRANDS.contains(brand);
+    }
+
+    private static String specificIsoBmffFormat(String brand) {
+        if (HEIC_BRANDS.contains(brand)) return "heic";
+        if (AVIF_BRANDS.contains(brand)) return "avif";
+        if (JPEG2000_BRANDS.contains(brand)) return "jpeg2000";
+        if (JXL_BRANDS.contains(brand)) return "jxl";
+        if (CR3_BRANDS.contains(brand)) return "cr3";
+        return null;
+    }
+
+    /**
+     * Classifies an {@code ftyp} box from its major and compatible brands.
+     * A codec-specific brand anywhere in the box wins over the generic HEIF
+     * structural brands, so an AVIF or HEIC file whose major brand is
+     * {@code mif1} is still reported by its codec.
+     */
     private static String detectIsoBmff(byte[] h, int len) {
         int boxSize = ((h[0] & 0xFF) << 24) | ((h[1] & 0xFF) << 16)
                 | ((h[2] & 0xFF) << 8) | (h[3] & 0xFF);
         int limit = boxSize == 0 ? len : Math.min(boxSize, len);
+        boolean genericHeif = false;
+        // Major brand at 8, then compatible brands after the minor version.
         for (int off = 8; off + 4 <= limit; off += off == 8 ? 8 : 4) {
             String brand = new String(h, off, 4, StandardCharsets.US_ASCII);
-            if (Set.of("heic", "heix", "heim", "heis", "hevc", "hevx",
-                    "hevm", "hevs").contains(brand)) return "heic";
-            if (Set.of("mif1", "mif2").contains(brand)) return "heif";
-            if (Set.of("avif", "avis").contains(brand)) return "avif";
-            if (Set.of("jp2 ", "jpx ", "jpm ").contains(brand)) return "jpeg2000";
-            if ("jxl ".equals(brand)) return "jxl";
-            if (Set.of("crx ", "cr3 ").contains(brand)) return "cr3";
+            String format = specificIsoBmffFormat(brand);
+            if (format != null) return format;
+            genericHeif |= HEIF_BRANDS.contains(brand);
         }
-        return null;
+        return genericHeif ? "heif" : null;
     }
 
+    // ── TIFF family ─────────────────────────────────────────────────────
+
+    private static final int TIFF_TAG_NEW_SUBFILE_TYPE = 0x00FE;
+    private static final int TIFF_TAG_MAKE = 0x010F;
+    private static final int TIFF_TAG_SUB_IFDS = 0x014A;
+    private static final int TIFF_TAG_DNG_VERSION = 0xC612;
+
+    /**
+     * Separates TIFF-based camera RAW from plain TIFF using the first IFD.
+     * <p>
+     * A camera make alone is not enough: a TIFF exported from a camera JPEG
+     * keeps the make. NEF and ARW are recognised only when the first IFD is
+     * also a reduced-resolution preview that points at sub-IFDs holding the
+     * sensor data. Anything else is reported as plain TIFF; a backend that
+     * can decode the RAW payload still claims it through its own probe.
+     */
     private static String detectTiffFamily(byte[] h, int len) {
         if (len >= 12 && h[8] == 'C' && h[9] == 'R'
                 && u(h[10]) == 2 && h[11] == 0) return "cr2";
-        if (containsTiffTag(h, len, 0xC612)) return "dng";
-        int scan = Math.min(len, 4096);
-        if (containsAscii(h, scan, "DNG")) return "dng";
-        if (containsAscii(h, scan, "Nikon")) return "nef";
-        if (containsAscii(h, scan, "SONY")) return "arw";
+        if (findTiffEntry(h, len, TIFF_TAG_DNG_VERSION) >= 0) return "dng";
+
+        String make = tiffAscii(h, len, TIFF_TAG_MAKE);
+        if (make != null && firstIfdIsRawPreview(h, len)) {
+            String upper = make.toUpperCase(java.util.Locale.ROOT);
+            if (upper.startsWith("NIKON")) return "nef";
+            if (upper.startsWith("SONY")) return "arw";
+        }
         return "tiff";
     }
 
-    private static boolean containsTiffTag(byte[] h, int len, int wantedTag) {
-        if (len < 8) return false;
+    private static boolean firstIfdIsRawPreview(byte[] h, int len) {
+        if (findTiffEntry(h, len, TIFF_TAG_SUB_IFDS) < 0) return false;
+        int entry = findTiffEntry(h, len, TIFF_TAG_NEW_SUBFILE_TYPE);
+        if (entry < 0) return false;
+        boolean little = h[0] == 'I';
+        int type = unsignedShort(h, entry + 2, little);
+        long value = type == 3
+                ? unsignedShort(h, entry + 8, little)
+                : unsignedInt(h, entry + 8, little);
+        return (value & 1) != 0;
+    }
+
+    /** Reads an ASCII tag of the first IFD when its value lies in the prefix. */
+    private static String tiffAscii(byte[] h, int len, int tag) {
+        int entry = findTiffEntry(h, len, tag);
+        if (entry < 0) return null;
+        boolean little = h[0] == 'I';
+        if (unsignedShort(h, entry + 2, little) != 2) return null;
+        long count = unsignedInt(h, entry + 4, little);
+        if (count <= 0 || count > 256) return null;
+        long start = count <= 4 ? entry + 8 : unsignedInt(h, entry + 8, little);
+        if (start < 0 || start + count > len) return null;
+        int length = (int) count;
+        while (length > 0 && h[(int) start + length - 1] == 0) length--;
+        return new String(h, (int) start, length, StandardCharsets.US_ASCII);
+    }
+
+    /**
+     * Returns the offset of a tag's 12-byte entry in the first IFD, or -1 when
+     * the tag is absent or the entry lies beyond the prefix.
+     */
+    private static int findTiffEntry(byte[] h, int len, int wantedTag) {
+        if (len < 8) return -1;
         boolean little = h[0] == 'I';
         long offset = unsignedInt(h, 4, little);
-        if (offset < 0 || offset + 2 > len) return false;
+        if (offset < 0 || offset + 2 > len) return -1;
         int entries = unsignedShort(h, (int) offset, little);
         int position = (int) offset + 2;
         for (int i = 0; i < entries && position + 12 <= len; i++, position += 12) {
-            if (unsignedShort(h, position, little) == wantedTag) return true;
+            if (unsignedShort(h, position, little) == wantedTag) return position;
         }
-        return false;
+        return -1;
     }
 
     private static int unsignedShort(byte[] h, int offset, boolean little) {

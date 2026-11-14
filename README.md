@@ -535,6 +535,11 @@ processing and the worst-case thumbnail surfaces used for exact Apple/WIC
 render sizes. Override the limit in bytes with
 `-Dimageio.native.maxIntermediateBytes=<bytes>`.
 
+Independently of read parameters, the Apple and libvips backends refuse to
+decode an image larger than 256 megapixels, which guards against corrupt or
+hostile files that declare huge dimensions. Override the limit with
+`-Dimageio.native.maxPixels=<pixels>`.
+
 ### EXIF orientation
 
 Images from phones and cameras often carry an EXIF orientation tag (values 1-8) that describes how the sensor image should be rotated or flipped for correct display. Every still-image backend applies this transform automatically during decode, so the returned `BufferedImage` is display-ready and the same input has the same orientation whichever backend owns it.

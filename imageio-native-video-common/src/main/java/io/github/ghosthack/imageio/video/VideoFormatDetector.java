@@ -1,5 +1,7 @@
 package io.github.ghosthack.imageio.video;
 
+import io.github.ghosthack.imageio.common.FormatDetector;
+
 import javax.imageio.stream.ImageInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,28 +24,20 @@ import java.util.Set;
  * <p>
  * ISO BMFF containers are also used for still images (HEIC, AVIF). To avoid
  * claiming image files as video, {@link #detectVideoISOBMFF} checks the ftyp major
- * brand and compatible brands against a set of known image brands and rejects
- * the match if any image brand is found.
+ * brand and compatible brands against the still-image brands known to
+ * {@link FormatDetector#isStillImageBrand} and rejects the match if any is
+ * found. Audio-only major brands are rejected as well.
  */
 public final class VideoFormatDetector {
 
     private VideoFormatDetector() {}
 
     /**
-     * ISO BMFF brands that identify still-image containers.
-     * If the ftyp box declares any of these (as major or compatible brand),
-     * the file is an image — not a video — and must not be claimed.
+     * ISO BMFF major brands of audio-only files. They share the MP4
+     * container but never hold a video track.
      */
-    private static final Set<String> IMAGE_BRANDS = Set.of(
-            // HEIF / HEIC
-            "heic", "heix", "heim", "heis",
-            "hevc", "hevx", "hevm", "hevs",
-            "mif1", "mif2",
-            // AVIF
-            "avif", "avis",
-            // JPEG 2000
-            "jp2 ", "jpx ", "jpm "
-    );
+    private static final Set<String> AUDIO_BRANDS = Set.of(
+            "M4A ", "M4B ", "M4P ");
 
     /**
      * Known QuickTime/MPEG-4 atom types that appear at the start of MOV/MP4 files.
@@ -101,7 +95,8 @@ public final class VideoFormatDetector {
      * Returns {@code true} if the header is an ISO BMFF container (has {@code ftyp}
      * at offset 4) and none of its brands identify it as a still-image format.
      * <p>
-     * This prevents HEIC, AVIF, and JPEG 2000 files from being claimed as video.
+     * This prevents HEIC, AVIF, JPEG 2000, JPEG XL, and Canon CR3 files from
+     * being claimed as video.
      */
     private static String detectVideoISOBMFF(byte[] h, int n) {
         // Must have ftyp signature at offset 4..7
@@ -116,14 +111,15 @@ public final class VideoFormatDetector {
 
         // Major brand at offset 8..11
         String major = new String(h, 8, 4, StandardCharsets.US_ASCII);
-        if (IMAGE_BRANDS.contains(major)) return null;
+        if (FormatDetector.isStillImageBrand(major)) return null;
+        if (AUDIO_BRANDS.contains(major)) return null;
 
         // Compatible brands start at offset 16 (after 4-byte minor_version)
         // boxSize == 0 means "box extends to end of file" per ISO 14496-12
         int limit = (boxSize == 0) ? n : Math.min(boxSize, n);
         for (int off = 16; off + 4 <= limit; off += 4) {
             String compat = new String(h, off, 4, StandardCharsets.US_ASCII);
-            if (IMAGE_BRANDS.contains(compat)) return null;
+            if (FormatDetector.isStillImageBrand(compat)) return null;
         }
 
         if (major.startsWith("3g")) return "3gp";

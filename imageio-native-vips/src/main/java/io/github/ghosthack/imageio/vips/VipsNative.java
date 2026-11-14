@@ -1,6 +1,7 @@
 package io.github.ghosthack.imageio.vips;
 
 import io.github.ghosthack.imageio.common.NativeDecodeRequest;
+import io.github.ghosthack.imageio.common.NativeLimits;
 
 import javax.imageio.IIOException;
 import java.awt.Dimension;
@@ -36,8 +37,6 @@ final class VipsNative {
     private static final int VIPS_ACCESS_SEQUENTIAL = 1;
     private static final int VIPS_SIZE_FORCE = 3;
 
-    /** Maximum total pixel count to prevent OOM (same as the platform-native backends). */
-    private static final long MAX_PIXELS = 256L * 1024 * 1024;
 
     // ── Library loading ─────────────────────────────────────────────────
 
@@ -603,10 +602,7 @@ final class VipsNative {
         if (w <= 0 || h <= 0)
             throw new IIOException("Invalid image dimensions: " + w + "x" + h);
 
-        long totalPixels = (long) w * h;
-        if (totalPixels > MAX_PIXELS)
-            throw new IIOException("Image too large: " + w + "x" + h + " (" + totalPixels
-                    + " pixels exceeds limit of " + MAX_PIXELS + ")");
+        NativeLimits.requireDecodable(w, h);
 
         boolean hasAlpha = ((int) vips_image_hasalpha.invokeExact(img)) != 0;
 

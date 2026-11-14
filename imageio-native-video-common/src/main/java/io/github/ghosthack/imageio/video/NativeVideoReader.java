@@ -4,7 +4,6 @@ import io.github.ghosthack.imageio.common.ImageReadParamSupport;
 import io.github.ghosthack.imageio.common.NativeDecodeRequest;
 import io.github.ghosthack.imageio.common.NativeDecodeResult;
 
-import javax.imageio.IIOException;
 import javax.imageio.ImageReadParam;
 import javax.imageio.ImageReader;
 import javax.imageio.ImageTypeSpecifier;
@@ -33,9 +32,6 @@ import java.util.List;
  * that the file path can be passed to the native video extraction APIs.
  */
 public class NativeVideoReader extends ImageReader {
-
-    private static final long MAX_INTERMEDIATE_BYTES = Long.getLong(
-            "imageio.native.maxIntermediateBytes", 512L * 1024 * 1024);
 
     /** Backend fixed by the caller, or {@code null} to route per input. */
     private final VideoFrameExtractorProvider fixedProvider;
@@ -157,14 +153,7 @@ public class NativeVideoReader extends ImageReader {
             width = info.width();
             height = info.height();
         }
-        if ((long) width * height > MAX_INTERMEDIATE_BYTES / 4L) {
-            throw new IIOException(
-                    "Read parameters require a full "
-                            + width + "x" + height
-                            + " intermediate, exceeding imageio.native."
-                            + "maxIntermediateBytes="
-                            + MAX_INTERMEDIATE_BYTES);
-        }
+        ImageReadParamSupport.validateIntermediateDimensions(width, height);
     }
 
     private void checkIndex(int imageIndex) throws IOException {
