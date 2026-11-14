@@ -1,13 +1,17 @@
 package io.github.ghosthack.imageio.common;
 
+import javax.imageio.stream.ImageInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
 
 /**
- * Shared magic-byte detection that names the format of an input prefix.
+ * Shared magic-byte detection for ISO BMFF (ftyp), RIFF/WEBP containers,
+ * and Java-native image formats.
  * <p>
- * The routing layer uses the result to find candidate backends and to apply
- * routing preferences; each backend still confirms with its own probe.
+ * Used by the {@link javax.imageio.spi.ImageReaderSpi} implementations in
+ * both the Apple and Windows platform modules to decide whether they can
+ * decode a given input.
  */
 public final class FormatDetector {
 
@@ -328,6 +332,72 @@ public final class FormatDetector {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Checks whether an {@link ImageInputStream} starts with an ISO BMFF
+     * {@code ftyp} box whose major brand or any compatible brand is in the
+     * supplied set.
+     * <p>
+     * The stream position is saved and restored.
+     *
+     * @param stream the image input stream (must support mark/reset)
+     * @param brands set of 4-character brand codes to match
+     * @return {@code true} if the stream matches
+     */
+    public static boolean matchesFtyp(ImageInputStream stream, Set<String> brands) throws IOException {
+        byte[] header = new byte[128];
+        stream.mark();
+        try {
+            int n = stream.read(header, 0, header.length);
+            if (n < 12) return false;
+
+            // bytes 4..7 must be "ftyp"
+            if (header[4] != 'f' || header[5] != 't' || header[6] != 'y' || header[7] != 'p')
+                return false;
+
+            // Box size (big-endian uint32 at offset 0)
+            int boxSize = ((header[0] & 0xFF) << 24)
+                        | ((header[1] & 0xFF) << 16)
+                        | ((header[2] & 0xFF) <<  8)
+                        | ((header[3] & 0xFF));
+
+            // Major brand at offset 8..11
+            String major = new String(header, 8, 4, StandardCharsets.US_ASCII);
+            if (brands.contains(major)) return true;
+
+            // Compatible brands start at offset 16 (after 4-byte minor_version)
+            // boxSize == 0 means "box extends to end of file" per ISO 14496-12
+            int limit = (boxSize == 0) ? n : Math.min(boxSize, n);
+            for (int off = 16; off + 4 <= limit; off += 4) {
+                String compat = new String(header, off, 4, StandardCharsets.US_ASCII);
+                if (brands.contains(compat)) return true;
+            }
+
+            return false;
+        } finally {
+            stream.reset();
+        }
+    }
+
+    /**
+     * Checks whether an {@link ImageInputStream} starts with the RIFF/WEBP
+     * magic bytes: {@code RIFF....WEBP}.
+     * <p>
+     * The stream position is saved and restored.
+     */
+    public static boolean matchesWebP(ImageInputStream stream) throws IOException {
+        byte[] header = new byte[12];
+        stream.mark();
+        try {
+            int n = stream.read(header, 0, 12);
+            if (n < 12) return false;
+            // offset 0..3 = "RIFF", offset 8..11 = "WEBP"
+            return header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F'
+                && header[8] == 'W' && header[9] == 'E' && header[10] == 'B' && header[11] == 'P';
+        } finally {
+            stream.reset();
+        }
     }
 
     /** Unsigned byte → int. */

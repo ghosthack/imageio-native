@@ -15,8 +15,9 @@ import java.util.Map;
  */
 public final class FormatRegistry {
 
-    /** A format's ImageIO names, suffixes, and MIME types. */
-    public record Format(String[] names, String[] suffixes, String[] mimeTypes) {}
+    /** A format's ImageIO names, suffixes, MIME types, and host-JDK overlap. */
+    public record Format(String[] names, String[] suffixes, String[] mimeTypes,
+                         boolean javaNative) {}
 
     private final List<Format> formats;
     private final Map<String, String> canonicalNames;
