@@ -29,51 +29,51 @@ final class FormatRegistry {
     /** All known libvips-decodable formats with metadata. */
     private static final List<Format> ALL_FORMATS = List.of(
         // ── Java-native formats (built-in readers already exist) ────────
-        new Format(a("JPEG","jpeg","JPG","jpg"),  a("jpg","jpeg","jpe","jfif"), a("image/jpeg"),                     true),
-        new Format(a("PNG","png"),                 a("png"),                     a("image/png","image/x-png"),        true),
-        new Format(a("GIF","gif"),                 a("gif"),                     a("image/gif"),                      true),
-        new Format(a("BMP","bmp"),                 a("bmp","dib"),               a("image/bmp","image/x-ms-bmp"),     true),
-        new Format(a("TIFF","tiff"),               a("tiff","tif"),              a("image/tiff"),                     true),
-        new Format(a("WBMP","wbmp"),               a("wbmp"),                    a("image/vnd.wap.wbmp"),             true),
+        new Format(a("JPEG","jpeg","JPG","jpg"),  a("jpg","jpeg","jpe","jfif"), a("image/jpeg")),
+        new Format(a("PNG","png"),                 a("png"),                     a("image/png","image/x-png")),
+        new Format(a("GIF","gif"),                 a("gif"),                     a("image/gif")),
+        new Format(a("BMP","bmp"),                 a("bmp","dib"),               a("image/bmp","image/x-ms-bmp")),
+        new Format(a("TIFF","tiff"),               a("tiff","tif"),              a("image/tiff")),
+        new Format(a("WBMP","wbmp"),               a("wbmp"),                    a("image/vnd.wap.wbmp")),
 
         // ── Supplemental: formats Java cannot decode natively ───────────
 
         // HEIF family (requires libheif)
-        new Format(a("HEIC","heic"),               a("heic"),                    a("image/heic"),                     false),
-        new Format(a("HEIF","heif"),               a("heif"),                    a("image/heif"),                     false),
+        new Format(a("HEIC","heic"),               a("heic"),                    a("image/heic")),
+        new Format(a("HEIF","heif"),               a("heif"),                    a("image/heif")),
 
         // AV1 image (requires libheif with AV1 decoder)
-        new Format(a("AVIF","avif"),               a("avif"),                    a("image/avif"),                     false),
+        new Format(a("AVIF","avif"),               a("avif"),                    a("image/avif")),
 
         // WebP (requires libwebp)
-        new Format(a("WEBP","webp","WebP"),        a("webp"),                    a("image/webp"),                     false),
+        new Format(a("WEBP","webp","WebP"),        a("webp"),                    a("image/webp")),
 
         // JPEG 2000 (requires libopenjp2)
-        new Format(a("JPEG2000","jpeg2000","JP2","jp2"), a("jp2","j2k","jpf","jpx","j2c"), a("image/jp2","image/jpeg2000"), false),
+        new Format(a("JPEG2000","jpeg2000","JP2","jp2"), a("jp2","j2k","jpf","jpx","j2c"), a("image/jp2","image/jpeg2000")),
 
         // PDF (requires poppler)
-        new Format(a("PDF","pdf"),                 a("pdf"),                     a("application/pdf"),                false),
+        new Format(a("PDF","pdf"),                 a("pdf"),                     a("application/pdf")),
 
         // SVG (requires librsvg)
-        new Format(a("SVG","svg"),                 a("svg","svgz"),              a("image/svg+xml"),                  false),
+        new Format(a("SVG","svg"),                 a("svg","svgz"),              a("image/svg+xml")),
 
         // OpenEXR (requires OpenEXR library)
-        new Format(a("EXR","exr","OpenEXR"),       a("exr"),                     a("image/x-exr"),                   false),
+        new Format(a("EXR","exr","OpenEXR"),       a("exr"),                     a("image/x-exr")),
 
         // FITS (requires cfitsio)
-        new Format(a("FITS","fits"),               a("fits","fit","fts"),        a("application/fits"),               false),
+        new Format(a("FITS","fits"),               a("fits","fit","fts"),        a("application/fits")),
 
         // Netpbm (built-in)
-        new Format(a("PBM","pbm"),                 a("pbm"),                     a("image/x-portable-bitmap"),        false),
-        new Format(a("PGM","pgm"),                 a("pgm"),                     a("image/x-portable-graymap"),       false),
-        new Format(a("PPM","ppm"),                 a("ppm"),                     a("image/x-portable-pixmap"),        false),
-        new Format(a("PFM","pfm"),                 a("pfm"),                     a("image/x-portable-floatmap"),      false),
+        new Format(a("PBM","pbm"),                 a("pbm"),                     a("image/x-portable-bitmap")),
+        new Format(a("PGM","pgm"),                 a("pgm"),                     a("image/x-portable-graymap")),
+        new Format(a("PPM","ppm"),                 a("ppm"),                     a("image/x-portable-pixmap")),
+        new Format(a("PFM","pfm"),                 a("pfm"),                     a("image/x-portable-floatmap")),
 
         // Radiance HDR (built-in)
-        new Format(a("HDR","hdr","Radiance"),      a("hdr"),                     a("image/vnd.radiance"),             false),
+        new Format(a("HDR","hdr","Radiance"),      a("hdr"),                     a("image/vnd.radiance")),
 
         // Analyze (built-in)
-        new Format(a("Analyze","analyze"),          a("hdr","img"),               a("application/x-analyze"),          false)
+        new Format(a("Analyze","analyze"),          a("hdr","img"),               a("application/x-analyze"))
     );
 
     static final io.github.ghosthack.imageio.common.FormatRegistry INSTANCE =
