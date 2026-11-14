@@ -15,14 +15,18 @@ import java.io.IOException;
  * <p>
  * Usage:
  * <pre>
- * java --enable-native-access=ALL-UNNAMED -jar example-consumer.jar photo.heic clip.mp4
+ * java --module-path lib \
+ *      --enable-native-access=io.github.ghosthack.imageio.apple,io.github.ghosthack.imageio.video.apple \
+ *      --module io.github.ghosthack.imageio.example/demo.DecodeDemo photo.heic clip.mp4
  * </pre>
  */
 public class DecodeDemo {
 
     public static void main(String[] args) throws IOException {
         if (args.length == 0) {
-            System.out.println("Usage: java --enable-native-access=ALL-UNNAMED -jar example-consumer.jar <file>...");
+            System.out.println("Usage: java --module-path lib \\");
+            System.out.println("       --enable-native-access=<backend-modules> \\");
+            System.out.println("       --module io.github.ghosthack.imageio.example/demo.DecodeDemo <file>...");
             System.out.println();
             System.out.println("Supports images (HEIC, AVIF, WEBP, JP2, RAW, ...) and video poster frames (MP4, MOV, ...)");
             System.out.println();

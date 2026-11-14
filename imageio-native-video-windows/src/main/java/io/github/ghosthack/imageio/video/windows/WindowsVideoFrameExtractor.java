@@ -25,6 +25,9 @@ import java.util.Objects;
  */
 public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
 
+    private static final boolean IS_WINDOWS = System.getProperty("os.name", "")
+            .toLowerCase(Locale.ROOT).contains("windows");
+
     @Override
     public String id() {
         return "windows";
@@ -37,7 +40,7 @@ public class WindowsVideoFrameExtractor implements VideoFrameExtractorProvider {
 
     @Override
     public boolean isAvailable() {
-        return MediaFoundation.isAvailable();
+        return IS_WINDOWS && MediaFoundation.isAvailable();
     }
 
     @Override

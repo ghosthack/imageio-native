@@ -7,7 +7,7 @@ module io.github.ghosthack.imageio.video.apple {
     exports io.github.ghosthack.imageio.video.apple;
 
     provides io.github.ghosthack.imageio.common.RoutingBackend
-            with io.github.ghosthack.imageio.video.apple.AppleVideoFrameExtractor;
+            with io.github.ghosthack.imageio.video.apple.internal.AppleVideoBackend;
     provides io.github.ghosthack.imageio.video.VideoFrameExtractorProvider
-            with io.github.ghosthack.imageio.video.apple.AppleVideoFrameExtractor;
+            with io.github.ghosthack.imageio.video.apple.internal.AppleVideoBackend;
 }
