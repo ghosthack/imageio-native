@@ -144,6 +144,77 @@ class FFmpegVideoFrameExtractorTest {
         assertEquals("h264", info.codec());
     }
 
+    // ── Display rotation ────────────────────────────────────────────────
+    // test-video-rotated.mp4 is stored 32x16 (Red | Blue) with a display
+    // matrix that turns it 90° clockwise: displayed 16x32, Red over Blue.
+
+    @Test
+    void rotatedVideoReportsAndReturnsTheDisplayedFrame() throws Exception {
+        assumeFFmpeg();
+        Path video = extractResource("test-video-rotated.mp4");
+
+        VideoInfo info = extractor.getInfo(video);
+        BufferedImage frame = extractor.extractFrame(video, Duration.ZERO);
+
+        assertEquals(16, info.width());
+        assertEquals(32, info.height());
+        assertEquals(info.width(), frame.getWidth());
+        assertEquals(info.height(), frame.getHeight());
+        assertDominantColorAt(frame, 8, 4, 0, "red");
+        assertDominantColorAt(frame, 8, 27, 2, "blue");
+    }
+
+    @Test
+    void rotatedVideoRenderSizeDescribesTheDisplayedFrame() throws Exception {
+        assumeFFmpeg();
+        BufferedImage frame = extractor.extractFrame(
+                extractResource("test-video-rotated.mp4"),
+                Duration.ZERO,
+                new Dimension(8, 16));
+
+        assertEquals(8, frame.getWidth());
+        assertEquals(16, frame.getHeight());
+        assertDominantColorAt(frame, 4, 2, 0, "red");
+        assertDominantColorAt(frame, 4, 13, 2, "blue");
+    }
+
+    // ── Seek accuracy ───────────────────────────────────────────────────
+    // test-video-long-gop.mp4 has a single keyframe at t=0 and changes
+    // colour every second: Red, Green, Blue.
+
+    @Test
+    void seekDecodesForwardFromTheKeyframeToTheRequestedTime() throws Exception {
+        assumeFFmpeg();
+        Path video = extractResource("test-video-long-gop.mp4");
+
+        assertDominantColor(
+                extractor.extractFrame(video, Duration.ofMillis(500)), 0, "red");
+        assertDominantColor(
+                extractor.extractFrame(video, Duration.ofMillis(1500)), 1, "green");
+        assertDominantColor(
+                extractor.extractFrame(video, Duration.ofMillis(2500)), 2, "blue");
+    }
+
+    @Test
+    void seekPastTheEndReturnsTheLastFrame() throws Exception {
+        assumeFFmpeg();
+        BufferedImage frame = extractor.extractFrame(
+                extractResource("test-video-long-gop.mp4"), Duration.ofSeconds(30));
+
+        assertDominantColor(frame, 2, "blue");
+    }
+
+    private static void assertDominantColorAt(
+            BufferedImage frame, int x, int y, int channel, String name) {
+        int argb = frame.getRGB(x, y);
+        int[] channels = {(argb >>> 16) & 0xFF, (argb >>> 8) & 0xFF, argb & 0xFF};
+        assertTrue(channels[channel] > 200,
+                "Expected dominant " + name + " at " + x + "," + y
+                        + " but got 0x" + Integer.toHexString(argb));
+        assertTrue(channels[(channel + 1) % 3] < 80);
+        assertTrue(channels[(channel + 2) % 3] < 80);
+    }
+
     private static void assertDominantColor(BufferedImage frame, int channel, String name) {
         int argb = frame.getRGB(frame.getWidth() / 2, frame.getHeight() / 2);
         int[] channels = {(argb >>> 16) & 0xFF, (argb >>> 8) & 0xFF, argb & 0xFF};

@@ -432,6 +432,13 @@ BufferedImage frame = VideoFrameExtractor.extractFrame(
 VideoInfo info = VideoFrameExtractor.getInfo(Path.of("clip.mp4"));
 ```
 
+The AVFoundation and FFmpeg backends return frames as displayed: the
+container's rotation (the metadata phones record for portrait video) is
+applied, and `VideoInfo` reports the displayed width and height, so it always
+matches the extracted frame. With FFmpeg, a frame requested at a time is the
+first frame at or after it, decoded forward from the preceding keyframe;
+AVFoundation picks a frame within its seek tolerance of the requested time.
+
 | Module | Platform | Native API | Containers |
 |--------|----------|------------|------------|
 | `imageio-native-video-apple` | macOS | AVFoundation (AVAssetImageGenerator) | MP4, MOV, M4V, 3GP |
