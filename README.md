@@ -530,7 +530,7 @@ render sizes. Override the limit in bytes with
 
 ### EXIF orientation
 
-Images from phones and cameras often carry an EXIF orientation tag (values 1-8) that describes how the sensor image should be rotated or flipped for correct display. Both backends apply this transform automatically during decode so the returned `BufferedImage` is always display-ready.
+Images from phones and cameras often carry an EXIF orientation tag (values 1-8) that describes how the sensor image should be rotated or flipped for correct display. Every still-image backend applies this transform automatically during decode, so the returned `BufferedImage` is display-ready and the same input has the same orientation whichever backend owns it.
 
 | EXIF value | Transform |
 |------------|-----------|
@@ -547,9 +547,13 @@ Images from phones and cameras often carry an EXIF orientation tag (values 1-8) 
 
 **Windows (WIC):** Reads the EXIF orientation tag via `IWICMetadataQueryReader`, then inserts an `IWICBitmapFlipRotator` between the frame decoder and the format converter. The flip-rotator is a zero-copy coordinate remap -- it transforms pixel coordinates during `CopyPixels` rather than allocating a second buffer. For orientation 1 (no rotation), the flip-rotator is skipped entirely.
 
-Both `getSize()` and `decode()` are orientation-aware: dimensions are swapped for orientations 5-8 (90/270 rotations), so width and height always reflect the display-oriented image.
+**libvips:** Applies `vips_autorot` to full and cropped decodes; `vips_thumbnail` already rotates reduced decodes. Upright images stream with sequential access, while an image that needs a transform is opened with random access because rotation cannot be streamed.
 
-**Performance impact:** Negligible. Both platforms apply the transform as part of the existing decode pipeline with no extra buffer allocations or pixel copies. The macOS path creates a small options dictionary per decode call; the Windows flip-rotator is a zero-copy coordinate remap. Orientation 1 (the common case for non-phone images) skips the transform entirely.
+**ImageMagick:** Calls `MagickAutoOrientImage` after reading and before any resize or crop.
+
+Size queries and decodes are orientation-aware on every backend: dimensions are swapped for orientations 5-8 (90/270 rotations), so width and height always reflect the display-oriented image.
+
+**Performance impact:** Negligible on the platform backends. Both platforms apply the transform as part of the existing decode pipeline with no extra buffer allocations or pixel copies. The macOS path creates a small options dictionary per decode call; the Windows flip-rotator is a zero-copy coordinate remap. Orientation 1 (the common case for non-phone images) skips the transform entirely. libvips and ImageMagick rotate in memory, so a rotated image costs one extra pass there.
 
 ## Project structure
 

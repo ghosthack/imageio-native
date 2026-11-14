@@ -51,12 +51,15 @@ final class VipsNative {
     // vips
     private static final MethodHandle vips_init;
     private static final MethodHandle vips_image_new_from_file;
+    private static final MethodHandle vips_image_new_from_file_access;
     private static final MethodHandle vips_image_new_from_buffer;
     private static final MethodHandle vips_thumbnail;
     private static final MethodHandle vips_extract_area;
     private static final MethodHandle vips_image_get_width;
     private static final MethodHandle vips_image_get_height;
     private static final MethodHandle vips_image_get_bands;
+    private static final MethodHandle vips_image_get_orientation;
+    private static final MethodHandle vips_autorot;
     private static final MethodHandle vips_image_hasalpha;
     private static final MethodHandle vips_colourspace;
     private static final MethodHandle vips_premultiply;
@@ -95,6 +98,13 @@ final class VipsNative {
                     Linker.Option.firstVariadicArg(1));
 
             // vips_image_new_from_buffer(void*, size_t, const char* option_string, ...) — variadic
+            // vips_image_new_from_file(path, "access", VipsAccess, NULL)
+            vips_image_new_from_file_access = LINKER.downcallHandle(
+                    LOOKUP.find("vips_image_new_from_file").orElseThrow(),
+                    FunctionDescriptor.of(ValueLayout.ADDRESS,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.JAVA_INT, ValueLayout.ADDRESS),
+                    Linker.Option.firstVariadicArg(1));
             vips_image_new_from_buffer = LINKER.downcallHandle(
                     LOOKUP.find("vips_image_new_from_buffer").orElseThrow(),
                     FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS,
@@ -131,6 +141,14 @@ final class VipsNative {
                     FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
             vips_image_get_bands = downcall("vips_image_get_bands",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+            vips_image_get_orientation = downcall("vips_image_get_orientation",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
+            vips_autorot = LINKER.downcallHandle(
+                    LOOKUP.find("vips_autorot").orElseThrow(),
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS,
+                            ValueLayout.ADDRESS),
+                    Linker.Option.firstVariadicArg(2));
             vips_image_hasalpha = downcall("vips_image_hasalpha",
                     FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
 
@@ -197,12 +215,15 @@ final class VipsNative {
         } else {
             vips_init = null;
             vips_image_new_from_file = null;
+            vips_image_new_from_file_access = null;
             vips_image_new_from_buffer = null;
             vips_thumbnail = null;
             vips_extract_area = null;
             vips_image_get_width = null;
             vips_image_get_height = null;
             vips_image_get_bands = null;
+            vips_image_get_orientation = null;
+            vips_autorot = null;
             vips_image_hasalpha = null;
             vips_colourspace = null;
             vips_premultiply = null;
@@ -261,7 +282,7 @@ final class VipsNative {
                 int h = (int) vips_image_get_height.invokeExact(img);
                 if (w <= 0 || h <= 0)
                     throw new IIOException("Invalid image dimensions: " + w + "x" + h);
-                return new int[]{w, h};
+                return transposes(img) ? new int[]{h, w} : new int[]{w, h};
             } finally {
                 g_object_unref.invokeExact(img);
             }
@@ -288,7 +309,7 @@ final class VipsNative {
                 int h = (int) vips_image_get_height.invokeExact(img);
                 if (w <= 0 || h <= 0)
                     throw new IIOException("Invalid image dimensions: " + w + "x" + h);
-                return new int[]{w, h};
+                return transposes(img) ? new int[]{h, w} : new int[]{w, h};
             } finally {
                 g_object_unref.invokeExact(img);
             }
@@ -310,6 +331,7 @@ final class VipsNative {
                     buf, (long) imageData.length, MemorySegment.NULL, MemorySegment.NULL);
             if (MemorySegment.NULL.equals(img))
                 throw new IIOException("vips load failed: " + errorMessage());
+            img = orient(arena, img);
             try {
                 return decodeFromVipsImage(arena, img);
             } finally {
@@ -329,23 +351,7 @@ final class VipsNative {
     static BufferedImage decodeFromPath(String path) throws IOException {
         if (!AVAILABLE) throw new IIOException("libvips is not available");
         try (Arena arena = Arena.ofConfined()) {
-            MemorySegment accessKey = arena.allocateFrom("access", StandardCharsets.UTF_8);
-            MemorySegment cpath = arena.allocateFrom(path, StandardCharsets.UTF_8);
-
-            // Load with sequential access hint for streaming performance.
-            // vips_image_new_from_file is variadic: (path, "access", int, NULL)
-            // We need a specific descriptor for this particular variadic invocation.
-            MethodHandle loadWithAccess = LINKER.downcallHandle(
-                    LOOKUP.find("vips_image_new_from_file").orElseThrow(),
-                    FunctionDescriptor.of(ValueLayout.ADDRESS,
-                            ValueLayout.ADDRESS, ValueLayout.ADDRESS,
-                            ValueLayout.JAVA_INT, ValueLayout.ADDRESS),
-                    Linker.Option.firstVariadicArg(1));
-
-            MemorySegment img = (MemorySegment) loadWithAccess.invokeExact(
-                    cpath, accessKey, VIPS_ACCESS_SEQUENTIAL, MemorySegment.NULL);
-            if (MemorySegment.NULL.equals(img))
-                throw new IIOException("vips load failed for: " + path + " — " + errorMessage());
+            MemorySegment img = loadOrientedFile(arena, path);
             try {
                 return decodeFromVipsImage(arena, img);
             } finally {
@@ -510,28 +516,77 @@ final class VipsNative {
             return output.get(ValueLayout.ADDRESS, 0);
         }
 
+        return loadOrientedFile(arena, path);
+    }
+
+    // ── EXIF orientation ────────────────────────────────────────────────
+
+    /** Returns the EXIF orientation (1-8); 1 when the image carries none. */
+    private static int orientation(MemorySegment img) throws Throwable {
+        int orientation = (int) vips_image_get_orientation.invokeExact(img);
+        return orientation >= 1 && orientation <= 8 ? orientation : 1;
+    }
+
+    /** Orientations 5-8 transpose the stored image, swapping width and height. */
+    private static boolean transposes(MemorySegment img) throws Throwable {
+        return orientation(img) >= 5;
+    }
+
+    /**
+     * Applies the EXIF orientation so pixels are display-ready, matching
+     * {@code vips_thumbnail} and the platform-native backends.
+     * <p>
+     * Takes ownership of {@code img}: the returned image replaces it and is
+     * the only reference the caller must release.
+     */
+    private static MemorySegment orient(Arena arena, MemorySegment img)
+            throws Throwable {
+        if (orientation(img) == 1) {
+            return img;
+        }
+        try {
+            MemorySegment output = arena.allocate(ValueLayout.ADDRESS);
+            int rc = (int) vips_autorot.invokeExact(
+                    img, output, MemorySegment.NULL);
+            if (rc != 0) {
+                throw new IIOException("vips autorot failed: " + errorMessage());
+            }
+            return output.get(ValueLayout.ADDRESS, 0);
+        } finally {
+            g_object_unref.invokeExact(img);
+        }
+    }
+
+    /**
+     * Opens a file and returns it display-oriented. Upright images stream
+     * with sequential access; rotation needs random access, so an image with
+     * a non-identity orientation is reopened without the sequential hint.
+     * The caller owns the returned image.
+     */
+    private static MemorySegment loadOrientedFile(Arena arena, String path)
+            throws Throwable {
+        MemorySegment cpath = arena.allocateFrom(path, StandardCharsets.UTF_8);
         MemorySegment accessKey =
                 arena.allocateFrom("access", StandardCharsets.UTF_8);
-        MethodHandle loadWithAccess = LINKER.downcallHandle(
-                LOOKUP.find("vips_image_new_from_file").orElseThrow(),
-                FunctionDescriptor.of(
-                        ValueLayout.ADDRESS,
-                        ValueLayout.ADDRESS,
-                        ValueLayout.ADDRESS,
-                        ValueLayout.JAVA_INT,
-                        ValueLayout.ADDRESS),
-                Linker.Option.firstVariadicArg(1));
-        MemorySegment image = (MemorySegment) loadWithAccess.invokeExact(
-                cpath,
-                accessKey,
-                VIPS_ACCESS_SEQUENTIAL,
-                MemorySegment.NULL);
-        if (MemorySegment.NULL.equals(image)) {
+        MemorySegment img =
+                (MemorySegment) vips_image_new_from_file_access.invokeExact(
+                        cpath, accessKey, VIPS_ACCESS_SEQUENTIAL,
+                        MemorySegment.NULL);
+        if (MemorySegment.NULL.equals(img)) {
             throw new IIOException(
-                    "vips load failed for: " + path
-                            + " — " + errorMessage());
+                    "vips load failed for: " + path + " — " + errorMessage());
         }
-        return image;
+        if (orientation(img) == 1) {
+            return img;
+        }
+        g_object_unref.invokeExact(img);
+        img = (MemorySegment) vips_image_new_from_file.invokeExact(
+                cpath, MemorySegment.NULL);
+        if (MemorySegment.NULL.equals(img)) {
+            throw new IIOException(
+                    "vips load failed for: " + path + " — " + errorMessage());
+        }
+        return orient(arena, img);
     }
 
     // ── Internal decode pipeline ────────────────────────────────────────
